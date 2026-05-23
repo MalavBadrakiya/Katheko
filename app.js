@@ -637,9 +637,7 @@ function renderLoops(user, season) {
             </div>
           </div>
           <div class="step-editor" id="step-editor">
-            ${stepEditorRow("Prepare", 3)}
-            ${stepEditorRow("Focused block", 25)}
-            ${stepEditorRow("Review", 5)}
+            ${stepEditorRow("Sample step", 5)}
           </div>
           <datalist id="habit-step-options">
             ${habits.map((habit) => `<option value="${escapeAttr(habit.title)}">${escapeHtml(habit.type === "break" ? "Break habit" : "Build habit")}</option>`).join("")}
@@ -906,17 +904,16 @@ function renderProfile(user, season) {
             <p class="panel-note">Each season runs for 84 days.</p>
           </div>
         </div>
-        <form data-form="add-season" class="form-grid compact">
+        <form data-form="add-season" class="form-grid stacked">
           <div class="field">
             <label for="season-name">Season</label>
             <input id="season-name" name="name" required placeholder="Next 12 weeks" />
           </div>
-          <div class="field">
-            <label for="season-start">Start</label>
-            <input id="season-start" name="startDate" type="date" value="${todayISO()}" required />
-          </div>
-          <div class="field">
-            <label>&nbsp;</label>
+          <div class="date-submit-row">
+            <div class="field">
+              <label for="season-start">Start date</label>
+              <input id="season-start" name="startDate" type="date" value="${todayISO()}" required />
+            </div>
             <button class="primary-btn" type="submit">Start</button>
           </div>
         </form>
