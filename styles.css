@@ -38,7 +38,10 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  background: #1c1f23;
+  background:
+    linear-gradient(135deg, transparent 0 16%, #c5e4ee 16% 27%, transparent 27% 100%),
+    linear-gradient(148deg, transparent 0 47%, #e9b4d3 47% 58%, transparent 58% 100%),
+    linear-gradient(120deg, #f3ead7 0%, #dcc9a9 100%);
   color: var(--ink);
   font-family: var(--body-font);
   letter-spacing: 0;
