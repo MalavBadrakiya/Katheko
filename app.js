@@ -38,7 +38,9 @@ document.addEventListener("submit", (event) => {
   if (type === "auth-login")  handleAuthLogin(data);
   if (type === "auth-signup") handleAuthSignup(data);
   if (type === "add-habit") addHabit(data);
+  if (type === "edit-habit") updateHabit(data);
   if (type === "add-loop") addLoop(data, form);
+  if (type === "edit-loop") updateLoop(data, form);
   if (type === "add-season") addSeason(data);
   if (type === "add-note") addKnowledgeNote(data);
 });
@@ -47,6 +49,12 @@ document.addEventListener("change", (event) => {
   const target = event.target;
   if (target.matches("[data-analytics-habit]")) {
     ui.analyticsHabitId = target.value;
+    persistUi();
+    render();
+  }
+  if (target.matches("[data-note-filter]")) {
+    ui.noteFilter = target.value;
+    ui.notesExpanded = false;
     persistUi();
     render();
   }
@@ -61,6 +69,8 @@ document.addEventListener("click", (event) => {
   if (action === "sign-out") handleSignOut();
   if (action === "auth-toggle") toggleAuthMode();
   if (action === "toggle-habit") toggleHabitLog(button.dataset.habitId, button.dataset.date);
+  if (action === "edit-habit") setEditHabit(button.dataset.habitId);
+  if (action === "cancel-edit-habit") setEditHabit("");
   if (action === "archive-habit") archiveHabit(button.dataset.habitId, true);
   if (action === "restore-habit") archiveHabit(button.dataset.habitId, false);
   if (action === "start-loop") startSession(button.dataset.loopId);
@@ -74,8 +84,12 @@ document.addEventListener("click", (event) => {
   if (action === "export-csv") exportCsv();
   if (action === "export-json") exportJson();
   if (action === "reset-demo") resetDemoData();
-  if (action === "new-step-row") addStepEditorRow();
+  if (action === "edit-loop") setEditLoop(button.dataset.loopId);
+  if (action === "cancel-edit-loop") setEditLoop("");
+  if (action === "new-step-row") addStepEditorRow(button.dataset.stepTarget);
   if (action === "remove-step-row") button.closest("[data-step-row]")?.remove();
+  if (action === "toggle-notes-expanded") toggleNotesExpanded();
+  if (action === "export-knowledge") exportKnowledgeBase();
   if (action === "habit-week-prev") setHabitWeek(-1);
   if (action === "habit-week-next") setHabitWeek(1);
   if (action === "habit-week-current") setHabitWeek(0, true);
@@ -102,6 +116,10 @@ function normaliseUi(next) {
     analyticsLoopId: next.analyticsLoopId || "",
     habitWeekOffset: Number(next.habitWeekOffset) || 0,
     profileSeasonId: next.profileSeasonId || "",
+    editHabitId: next.editHabitId || "",
+    editLoopId: next.editLoopId || "",
+    noteFilter: next.noteFilter || "all",
+    notesExpanded: Boolean(next.notesExpanded),
   };
 }
 
@@ -330,17 +348,10 @@ function render() {
           ${views
             .map(
               ([key, label]) =>
-                `<button class="${ui.view === key ? "active" : ""}" data-action="view" data-view="${key}">${label}</button>`,
+                `<button class="${ui.view === key ? "active" : ""} ${key === "profile" ? "nav-profile" : ""}" data-action="view" data-view="${key}">${label}</button>`,
             )
             .join("")}
         </nav>
-
-        <div class="season-card">
-          <span class="eyebrow">Ongoing season</span>
-          <h2>${escapeHtml(season?.name || "No season")}</h2>
-          <p>${season ? `${formatDate(season.startDate)} - ${formatDate(season.endDate)}` : "Create a season to begin."}</p>
-          <div class="side-meter"><span style="width: ${season ? seasonProgress(season) : 0}%"></span></div>
-        </div>
       </aside>
       <main class="main">
         ${season ? renderCurrentView(user, season) : renderNoSeason()}
@@ -398,7 +409,7 @@ function renderDashboard(user, season) {
   const metrics = seasonMetrics(season);
   const longest = longestSeasonStreak(habits, season);
   return `
-    ${pageHeader("Home", `${escapeHtml(user.name)}'s active 12-week season. ${metrics.daysLeft} days remain.`)}
+    ${pageHeader("Home", seasonSubtitle(season, metrics))}
     <section class="grid four">
       ${metricCard("Seasons elapsed", `${seasonProgress(season)}%`)}
       ${metricCard("Weekly Target completed", `${metrics.weeklyScore}%`)}
@@ -474,6 +485,10 @@ function renderDashboard(user, season) {
     </section>
     ${runtime.session ? `<section style="margin-top:16px;">${renderSessionStage()}</section>` : ""}
   `;
+}
+
+function seasonSubtitle(season, metrics = seasonMetrics(season)) {
+  return `${escapeHtml(season.name)} · ${formatDate(season.startDate)} - ${formatDate(season.endDate)} · ${metrics.daysLeft} day${metrics.daysLeft === 1 ? "" : "s"} remain.`;
 }
 
 function renderHabits(user, season) {
@@ -564,6 +579,7 @@ function renderHabits(user, season) {
 }
 
 function renderHabitRow(habit, season, weekStart, visibleWeek = currentWeekIndex(season)) {
+  if (ui.editHabitId === habit.id) return renderHabitEditRow(habit);
   return `
     <div class="row">
       <div>
@@ -584,9 +600,39 @@ function renderHabitRow(habit, season, weekStart, visibleWeek = currentWeekIndex
         </div>
       </div>
       <div class="split">
+        <button class="quiet-btn" data-action="edit-habit" data-habit-id="${habit.id}">Edit</button>
         <button class="quiet-btn" data-action="archive-habit" data-habit-id="${habit.id}">Archive</button>
       </div>
     </div>
+  `;
+}
+
+function renderHabitEditRow(habit) {
+  return `
+    <form class="row edit-row" data-form="edit-habit">
+      <input type="hidden" name="habitId" value="${escapeAttr(habit.id)}" />
+      <div class="edit-grid habit-edit-grid">
+        <div class="field">
+          <label for="edit-habit-title-${habit.id}">Habit</label>
+          <input id="edit-habit-title-${habit.id}" name="title" value="${escapeAttr(habit.title)}" required />
+        </div>
+        <div class="field">
+          <label for="edit-habit-type-${habit.id}">Type</label>
+          <select id="edit-habit-type-${habit.id}" name="type">
+            <option value="build" ${habit.type === "build" ? "selected" : ""}>Build</option>
+            <option value="break" ${habit.type === "break" ? "selected" : ""}>Break</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="edit-habit-target-${habit.id}">Weekly target</label>
+          <input id="edit-habit-target-${habit.id}" name="weeklyTarget" type="number" min="1" max="7" value="${habit.weeklyTarget}" required />
+        </div>
+      </div>
+      <div class="split">
+        <button class="primary-btn" type="submit">Save</button>
+        <button class="quiet-btn" type="button" data-action="cancel-edit-habit">Cancel</button>
+      </div>
+    </form>
   `;
 }
 
@@ -619,7 +665,7 @@ function renderLoops(user, season) {
             <h3 class="panel-title">Create loop</h3>
             <p class="panel-note">Add steps with durations in minutes.</p>
           </div>
-          <button class="ghost-btn" data-action="new-step-row" type="button">Add step</button>
+          <button class="ghost-btn" data-action="new-step-row" data-step-target="step-editor-create" type="button">Add step</button>
         </div>
         <form data-form="add-loop">
           <div class="form-grid compact">
@@ -636,7 +682,7 @@ function renderLoops(user, season) {
               <button class="primary-btn" type="submit">Save loop</button>
             </div>
           </div>
-          <div class="step-editor" id="step-editor">
+          <div class="step-editor" id="step-editor-create">
             ${stepEditorRow("Sample step", 5)}
           </div>
           <datalist id="habit-step-options">
@@ -655,26 +701,62 @@ function renderLoops(user, season) {
           ${
             loops.length
               ? loops
-                  .map(
-                    (loop) => `
-                    <div class="row">
-                      <div>
-                        <p class="row-title">${escapeHtml(loop.title)} <span class="chip blue">${loop.steps.length} steps</span></p>
-                        <p class="row-meta">${formatDuration(loopDuration(loop))} · ${loop.weeklyTarget}x/week · ${loopCompletionText(loop, season)}</p>
-                      </div>
-                      <div class="split">
-                        <button class="primary-btn" data-action="start-loop" data-loop-id="${loop.id}">Start</button>
-                        <button class="quiet-btn" data-action="remove-loop" data-loop-id="${loop.id}">Archive</button>
-                      </div>
-                    </div>
-                  `,
-                  )
+                  .map((loop) => renderLoopRow(loop, season, habits))
                   .join("")
               : `<div class="empty">No loops yet.</div>`
           }
         </div>
       </div>
     </section>
+  `;
+}
+
+function renderLoopRow(loop, season, habits) {
+  if (ui.editLoopId === loop.id) return renderLoopEditRow(loop, habits);
+  return `
+    <div class="row">
+      <div>
+        <p class="row-title">${escapeHtml(loop.title)} <span class="chip blue">${loop.steps.length} steps</span></p>
+        <p class="row-meta">${formatDuration(loopDuration(loop))} · ${loop.weeklyTarget}x/week · ${loopCompletionText(loop, season)}</p>
+      </div>
+      <div class="split">
+        <button class="primary-btn" data-action="start-loop" data-loop-id="${loop.id}">Start</button>
+        <button class="quiet-btn" data-action="edit-loop" data-loop-id="${loop.id}">Edit</button>
+        <button class="quiet-btn" data-action="remove-loop" data-loop-id="${loop.id}">Archive</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderLoopEditRow(loop, habits) {
+  const editorId = `step-editor-${loop.id}`;
+  return `
+    <form class="row edit-row loop-edit-row" data-form="edit-loop">
+      <input type="hidden" name="loopId" value="${escapeAttr(loop.id)}" />
+      <div class="loop-edit-body">
+        <div class="edit-grid loop-edit-grid">
+          <div class="field">
+            <label for="edit-loop-title-${loop.id}">Loop</label>
+            <input id="edit-loop-title-${loop.id}" name="title" value="${escapeAttr(loop.title)}" required />
+          </div>
+          <div class="field">
+            <label for="edit-loop-target-${loop.id}">Weekly target</label>
+            <input id="edit-loop-target-${loop.id}" name="weeklyTarget" type="number" min="1" max="7" value="${loop.weeklyTarget}" required />
+          </div>
+        </div>
+        <div class="step-editor" id="${editorId}">
+          ${loop.steps.map((step) => stepEditorRow(step.title, step.minutes)).join("")}
+        </div>
+        <datalist id="habit-step-options-${loop.id}">
+          ${habits.map((habit) => `<option value="${escapeAttr(habit.title)}">${escapeHtml(habit.type === "break" ? "Break habit" : "Build habit")}</option>`).join("")}
+        </datalist>
+      </div>
+      <div class="split">
+        <button class="primary-btn" type="submit">Save</button>
+        <button class="quiet-btn" type="button" data-action="new-step-row" data-step-target="${editorId}">Add step</button>
+        <button class="quiet-btn" type="button" data-action="cancel-edit-loop">Cancel</button>
+      </div>
+    </form>
   `;
 }
 
@@ -873,14 +955,13 @@ function renderAnalytics(user, season) {
 
 function renderProfile(user, season) {
   const seasons = userSeasons();
-  const events = userEvents();
   const selectedSeason = seasons.find((item) => item.id === ui.profileSeasonId) || season || seasons[0];
   const summary = selectedSeason ? seasonSummary(selectedSeason) : null;
   return `
     ${pageHeader(
       "Profile",
-      "Account, seasons, history, and exportable data.",
-      `<button class="quiet-btn" data-action="enable-notifications">Enable notifications</button><button class="quiet-btn" data-action="export-csv">Export CSV</button><button class="quiet-btn" data-action="export-json">Export JSON</button>`,
+      "Account, seasons, and exportable data.",
+      `<button class="quiet-btn" data-action="enable-notifications">Enable notifications</button><button class="quiet-btn" data-action="export-knowledge">Export knowledge base</button><button class="quiet-btn" data-action="export-csv">Export CSV</button><button class="quiet-btn" data-action="export-json">Export JSON</button>`,
     )}
     <section class="grid two">
       <div class="panel">
@@ -970,33 +1051,6 @@ function renderProfile(user, season) {
     <section class="panel" style="margin-top:16px;">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">History</h3>
-          <p class="panel-note">Events from habits, loops, and seasons.</p>
-        </div>
-      </div>
-      <div class="event-list">
-        ${
-          events.length
-            ? events
-                .slice(0, 10)
-                .map(
-                  (item) => `
-                  <div class="row">
-                    <div>
-                      <p class="row-title">${escapeHtml(item.label)} <span class="chip blue">${escapeHtml(item.type)}</span></p>
-                      <p class="row-meta">${formatDateTime(item.at)}</p>
-                    </div>
-                  </div>
-                `,
-                )
-                .join("")
-            : `<div class="empty">No history yet.</div>`
-        }
-      </div>
-    </section>
-    <section class="panel" style="margin-top:16px;">
-      <div class="panel-head">
-        <div>
           <h3 class="panel-title">Data controls</h3>
           <p class="panel-note">Reset only refreshes this browser demo data.</p>
         </div>
@@ -1008,6 +1062,12 @@ function renderProfile(user, season) {
 
 function renderCoach(user, season) {
   const insight = coachInsight(season);
+  const noteOptions = knowledgeTagOptions(season);
+  const filterOptions = knowledgeFilterOptions(season);
+  const visibleNotes = filteredNotes(season);
+  const allNotesCount = userNotes().length;
+  const isAllFilter = ui.noteFilter === "all";
+  const shownNotes = isAllFilter && !ui.notesExpanded ? visibleNotes.slice(0, 5) : visibleNotes;
   return `
     ${pageHeader("Coach", "Knowledge notes and local performance guidance.")}
     <section class="grid two">
@@ -1022,6 +1082,14 @@ function renderCoach(user, season) {
           <div class="field">
             <label for="note-title">Title</label>
             <input id="note-title" name="title" required placeholder="Weekly review rule" />
+          </div>
+          <div class="field">
+            <label for="note-tag">Journal</label>
+            <select id="note-tag" name="tagKey">
+              ${noteOptions
+                .map((option) => `<option value="${escapeAttr(option.key)}">${escapeHtml(option.label)}</option>`)
+                .join("")}
+            </select>
           </div>
           <div class="field">
             <label for="note-body">Note</label>
@@ -1046,19 +1114,28 @@ function renderCoach(user, season) {
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Saved notes</h3>
-          <p class="panel-note">${userNotes().length} knowledge item${userNotes().length === 1 ? "" : "s"}.</p>
+          <p class="panel-note">${allNotesCount} knowledge item${allNotesCount === 1 ? "" : "s"}.</p>
+        </div>
+        <div class="note-tools">
+          <select data-note-filter aria-label="Knowledge note filter">
+            ${filterOptions
+              .map((option) => `<option value="${escapeAttr(option.key)}" ${ui.noteFilter === option.key ? "selected" : ""}>${escapeHtml(option.label)}</option>`)
+              .join("")}
+          </select>
+          ${isAllFilter && visibleNotes.length > 5 ? `<button class="quiet-btn" data-action="toggle-notes-expanded">${ui.notesExpanded ? "Show latest 5" : "Show all"}</button>` : ""}
         </div>
       </div>
       <div class="event-list">
         ${
-          userNotes().length
-            ? userNotes()
+          shownNotes.length
+            ? shownNotes
                 .map(
                   (note) => `
                     <div class="row">
                       <div>
-                        <p class="row-title">${escapeHtml(note.title)}</p>
+                        <p class="row-title">${escapeHtml(note.title)} <span class="chip blue">${escapeHtml(noteTagLabel(note))}</span></p>
                         <p class="row-meta">${escapeHtml(note.body)}</p>
+                        <p class="row-meta">${formatDateTime(note.createdAt)}</p>
                       </div>
                     </div>
                   `,
@@ -1156,6 +1233,24 @@ function addHabit(data) {
   render();
 }
 
+function updateHabit(data) {
+  const habit = state.habits.find((item) => item.id === data.habitId && item.userId === state.activeUserId);
+  const title = String(data.title || "").trim();
+  if (!habit || !title) return;
+  const previous = { title: habit.title, type: habit.type, weeklyTarget: habit.weeklyTarget };
+  habit.title = title;
+  habit.type = data.type === "break" ? "break" : "build";
+  habit.weeklyTarget = clamp(Number(data.weeklyTarget) || 1, 1, 7);
+  if (previous.title !== habit.title || previous.type !== habit.type || previous.weeklyTarget !== habit.weeklyTarget) {
+    state.events.push(event(habit.userId, habit.seasonId, "habit", `Updated ${habit.title}`, nowIso()));
+  }
+  ui.editHabitId = "";
+  persist();
+  persistUi();
+  toast("Habit updated.");
+  render();
+}
+
 function toggleHabitLog(habitId, date) {
   const habit = state.habits.find((item) => item.id === habitId);
   if (!habit) return;
@@ -1195,22 +1290,7 @@ function addLoop(data, form) {
   const season = activeSeason();
   const title = String(data.title || "").trim();
   if (!title || !season) return;
-  const habits = activeHabits(season);
-  const rows = [...form.querySelectorAll("[data-step-row]")];
-  const steps = rows
-    .map((row) => {
-      const stepTitle = row.querySelector('[name="stepTitle"]')?.value.trim();
-      const minutes = Number(row.querySelector('[name="stepMinutes"]')?.value || 0);
-      if (!stepTitle || !minutes) return null;
-      const linkedHabit = habits.find((habit) => habit.title.toLowerCase() === stepTitle.toLowerCase());
-      return {
-        id: uid("step"),
-        title: stepTitle,
-        minutes: clamp(minutes, 1, 180),
-        ...(linkedHabit ? { habitId: linkedHabit.id } : {}),
-      };
-    })
-    .filter(Boolean);
+  const steps = readLoopSteps(form, season);
   if (!steps.length) {
     toast("Add at least one step.");
     return;
@@ -1232,6 +1312,45 @@ function addLoop(data, form) {
   render();
 }
 
+function updateLoop(data, form) {
+  const loop = state.loops.find((item) => item.id === data.loopId && item.userId === state.activeUserId);
+  const season = loop ? state.seasons.find((item) => item.id === loop.seasonId) : null;
+  const title = String(data.title || "").trim();
+  if (!loop || !season || !title) return;
+  const steps = readLoopSteps(form, season);
+  if (!steps.length) {
+    toast("Add at least one step.");
+    return;
+  }
+  loop.title = title;
+  loop.weeklyTarget = clamp(Number(data.weeklyTarget) || 1, 1, 7);
+  loop.steps = steps;
+  state.events.push(event(loop.userId, loop.seasonId, "loop", `Updated ${loop.title}`, nowIso()));
+  ui.editLoopId = "";
+  persist();
+  persistUi();
+  toast("Loop updated.");
+  render();
+}
+
+function readLoopSteps(form, season) {
+  const habits = activeHabits(season);
+  return [...form.querySelectorAll("[data-step-row]")]
+    .map((row) => {
+      const stepTitle = row.querySelector('[name="stepTitle"]')?.value.trim();
+      const minutes = Number(row.querySelector('[name="stepMinutes"]')?.value || 0);
+      if (!stepTitle || !minutes) return null;
+      const linkedHabit = habits.find((habit) => habit.title.toLowerCase() === stepTitle.toLowerCase());
+      return {
+        id: uid("step"),
+        title: stepTitle,
+        minutes: clamp(minutes, 1, 180),
+        ...(linkedHabit ? { habitId: linkedHabit.id } : {}),
+      };
+    })
+    .filter(Boolean);
+}
+
 function archiveLoop(loopId) {
   const loop = state.loops.find((item) => item.id === loopId);
   if (!loop) return;
@@ -1241,8 +1360,9 @@ function archiveLoop(loopId) {
   render();
 }
 
-function addStepEditorRow() {
-  document.querySelector("#step-editor")?.insertAdjacentHTML("beforeend", stepEditorRow("New step", 5));
+function addStepEditorRow(targetId = "step-editor-create") {
+  const safeId = targetId || "step-editor-create";
+  document.getElementById(safeId)?.insertAdjacentHTML("beforeend", stepEditorRow("New step", 5));
 }
 
 function startSession(loopId) {
@@ -1465,16 +1585,81 @@ function audioContext() {
 function addKnowledgeNote(data) {
   const title = String(data.title || "").trim();
   const body = String(data.body || "").trim();
+  const season = activeSeason();
+  const tag = resolveKnowledgeTag(data.tagKey, season);
   if (!title || !body) return;
   state.knowledgeNotes.push({
     id: uid("note"),
     userId: state.activeUserId,
+    seasonId: tag.seasonId,
+    tagType: tag.type,
+    tagId: tag.id,
+    tagLabel: tag.label,
     title,
     body,
     createdAt: nowIso(),
   });
   persist();
   toast("Note saved.");
+  render();
+}
+
+function knowledgeTagOptions(season) {
+  if (!season) return [{ key: "season:", label: "Season" }];
+  return [
+    { key: `season:${season.id}`, label: season.name },
+    ...activeHabits(season).map((habit) => ({ key: `habit:${habit.id}`, label: `Habit · ${habit.title}` })),
+    ...activeLoops(season).map((loop) => ({ key: `loop:${loop.id}`, label: `Loop · ${loop.title}` })),
+  ];
+}
+
+function knowledgeFilterOptions(season) {
+  return [{ key: "all", label: "All notes" }, ...knowledgeTagOptions(season)];
+}
+
+function resolveKnowledgeTag(tagKey, season) {
+  const [type, id] = String(tagKey || `season:${season?.id || ""}`).split(":");
+  if (type === "habit") {
+    const habit = userHabits().find((item) => item.id === id);
+    if (habit) return { type: "habit", id: habit.id, label: habit.title, seasonId: habit.seasonId };
+  }
+  if (type === "loop") {
+    const loop = userLoops().find((item) => item.id === id);
+    if (loop) return { type: "loop", id: loop.id, label: loop.title, seasonId: loop.seasonId };
+  }
+  const selectedSeason = userSeasons().find((item) => item.id === id) || season || userSeasons()[0];
+  return {
+    type: "season",
+    id: selectedSeason?.id || "",
+    label: selectedSeason?.name || "Season",
+    seasonId: selectedSeason?.id || "",
+  };
+}
+
+function noteTagKey(note) {
+  if (note.tagType && note.tagId) return `${note.tagType}:${note.tagId}`;
+  if (note.seasonId) return `season:${note.seasonId}`;
+  return "season:";
+}
+
+function noteTagLabel(note) {
+  if (note.tagLabel) return note.tagType === "season" ? note.tagLabel : `${titleCase(note.tagType || "note")} · ${note.tagLabel}`;
+  if (note.seasonId) return seasonName(note.seasonId);
+  return "General";
+}
+
+function filteredNotes(season) {
+  const notes = userNotes().sort((a, b) => parseISO(b.createdAt) - parseISO(a.createdAt));
+  const available = new Set(knowledgeFilterOptions(season).map((option) => option.key));
+  const filter = available.has(ui.noteFilter) ? ui.noteFilter : "all";
+  if (filter !== ui.noteFilter) ui.noteFilter = filter;
+  if (filter === "all") return notes;
+  return notes.filter((note) => noteTagKey(note) === filter);
+}
+
+function toggleNotesExpanded() {
+  ui.notesExpanded = !ui.notesExpanded;
+  persistUi();
   render();
 }
 
@@ -1580,8 +1765,66 @@ function exportJson() {
   download(`katheko-export-${todayISO()}.json`, JSON.stringify(payload, null, 2), "application/json");
 }
 
+function exportKnowledgeBase() {
+  const notes = userNotes().sort((a, b) => parseISO(a.createdAt) - parseISO(b.createdAt));
+  const root = `katheko-knowledge-base-${todayISO()}`;
+  const files = notes.length
+    ? notes.map((note, index) => ({
+        path: `${root}/${knowledgeNotePath(note, index)}`,
+        content: knowledgeNoteMarkdown(note),
+      }))
+    : [
+        {
+          path: `${root}/README.md`,
+          content: "# Katheko Knowledge Base\n\nNo notes have been saved yet.\n",
+        },
+      ];
+  const zip = createZip(files);
+  downloadBlob(`${root}.zip`, zip);
+}
+
+function knowledgeNotePath(note, index) {
+  const season = state.seasons.find((item) => item.id === note.seasonId) || state.seasons.find((item) => item.id === note.tagId);
+  const seasonFolder = safePathPart(season?.name || "Unassigned season");
+  const noteName = `${String(index + 1).padStart(3, "0")}-${safePathPart(note.title || "Untitled note")}.md`;
+  if (note.tagType === "habit") {
+    const habit = state.habits.find((item) => item.id === note.tagId);
+    return `${seasonFolder}/Habits/${safePathPart(habit?.title || note.tagLabel || "Habit")}/${noteName}`;
+  }
+  if (note.tagType === "loop") {
+    const loop = state.loops.find((item) => item.id === note.tagId);
+    return `${seasonFolder}/Loops/${safePathPart(loop?.title || note.tagLabel || "Loop")}/${noteName}`;
+  }
+  return `${seasonFolder}/Season Notes/${noteName}`;
+}
+
+function knowledgeNoteMarkdown(note) {
+  return [
+    `# ${note.title || "Untitled note"}`,
+    "",
+    `- Journal: ${noteTagLabel(note)}`,
+    `- Created: ${formatDateTime(note.createdAt)}`,
+    "",
+    note.body || "",
+    "",
+  ].join("\n");
+}
+
+function safePathPart(value) {
+  return String(value || "Untitled")
+    .trim()
+    .replace(/[\\/:*?"<>|#%{}^~[\]`]+/g, "-")
+    .replace(/\s+/g, " ")
+    .slice(0, 80)
+    || "Untitled";
+}
+
 function download(filename, content, type) {
   const blob = new Blob([content], { type });
+  downloadBlob(filename, blob);
+}
+
+function downloadBlob(filename, blob) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -1646,6 +1889,20 @@ function userEvents() {
 
 function userNotes() {
   return state.knowledgeNotes.filter((note) => note.userId === state.activeUserId);
+}
+
+function setEditHabit(habitId) {
+  ui.editHabitId = habitId || "";
+  ui.editLoopId = "";
+  persistUi();
+  render();
+}
+
+function setEditLoop(loopId) {
+  ui.editLoopId = loopId || "";
+  ui.editHabitId = "";
+  persistUi();
+  render();
 }
 
 function setHabitWeek(delta, current = false) {
@@ -1933,6 +2190,97 @@ function formatDuration(minutes) {
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
   return mins ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+function createZip(files) {
+  const encoder = new TextEncoder();
+  const chunks = [];
+  const central = [];
+  let offset = 0;
+
+  files.forEach((file) => {
+    const name = encoder.encode(file.path);
+    const data = encoder.encode(file.content);
+    const crc = crc32(data);
+    const local = zipLocalHeader(name, data.length, crc);
+    chunks.push(local, name, data);
+    central.push({ name, size: data.length, crc, offset });
+    offset += local.length + name.length + data.length;
+  });
+
+  let centralSize = 0;
+  central.forEach((file) => {
+    const header = zipCentralHeader(file);
+    chunks.push(header, file.name);
+    centralSize += header.length + file.name.length;
+  });
+
+  chunks.push(zipEndRecord(central.length, centralSize, offset));
+  return new Blob(chunks, { type: "application/zip" });
+}
+
+function zipLocalHeader(name, size, crc) {
+  const header = new Uint8Array(30);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, 0x04034b50, true);
+  view.setUint16(4, 20, true);
+  view.setUint16(8, 0, true);
+  view.setUint32(14, crc, true);
+  view.setUint32(18, size, true);
+  view.setUint32(22, size, true);
+  view.setUint16(26, name.length, true);
+  return header;
+}
+
+function zipCentralHeader(file) {
+  const header = new Uint8Array(46);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, 0x02014b50, true);
+  view.setUint16(4, 20, true);
+  view.setUint16(6, 20, true);
+  view.setUint16(10, 0, true);
+  view.setUint32(16, file.crc, true);
+  view.setUint32(20, file.size, true);
+  view.setUint32(24, file.size, true);
+  view.setUint16(28, file.name.length, true);
+  view.setUint32(42, file.offset, true);
+  return header;
+}
+
+function zipEndRecord(count, centralSize, centralOffset) {
+  const header = new Uint8Array(22);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, 0x06054b50, true);
+  view.setUint16(8, count, true);
+  view.setUint16(10, count, true);
+  view.setUint32(12, centralSize, true);
+  view.setUint32(16, centralOffset, true);
+  return header;
+}
+
+function crc32(data) {
+  let crc = -1;
+  for (const byte of data) {
+    crc = (crc >>> 8) ^ CRC_TABLE[(crc ^ byte) & 0xff];
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let index = 0; index < 256; index += 1) {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    }
+    table[index] = value >>> 0;
+  }
+  return table;
+})();
+
+function titleCase(value) {
+  const text = String(value || "");
+  return text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : "";
 }
 
 function csvCell(value) {

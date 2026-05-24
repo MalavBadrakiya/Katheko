@@ -4,8 +4,8 @@
   "description": "A 12-week behavioural operating system for habits, loops, sessions, and analytics.",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#f7f6f1",
-  "theme_color": "#202423",
+  "background_color": "#0f1114",
+  "theme_color": "#0f1114",
   "icons": [
     {
       "src": "./assets/katheko-logo.png",
