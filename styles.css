@@ -1031,10 +1031,6 @@ textarea:focus-visible {
   box-shadow: 3px 3px 0 var(--ink);
 }
 
-.challenge-card.needs-reflection {
-  background: var(--amber-soft);
-}
-
 .challenge-title {
   font-family: var(--display-font);
   font-size: 1.35rem;
@@ -1042,12 +1038,21 @@ textarea:focus-visible {
   font-weight: 900;
 }
 
-.challenge-reflection {
-  grid-column: 1 / -1;
-  display: grid;
-  gap: 12px;
-  padding-top: 12px;
-  border-top: 3px solid var(--ink);
+.challenge-progress {
+  width: min(100%, 360px);
+  height: 14px;
+  margin-top: 10px;
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  background: var(--paper);
+  overflow: hidden;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.challenge-progress span {
+  display: block;
+  height: 100%;
+  background: var(--coral);
 }
 
 .compact-list {

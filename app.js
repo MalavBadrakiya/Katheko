@@ -19,7 +19,6 @@ const XP_RULES = {
   loopComplete: 20,
   loopWeek: 40,
   seasonComplete: 150,
-  reflection: 10,
 };
 
 // ── Supabase client ──────────────────────────────────────────
@@ -54,7 +53,6 @@ document.addEventListener("submit", (event) => {
   if (type === "edit-loop") updateLoop(data, form);
   if (type === "add-season") addSeason(data);
   if (type === "add-note") addKnowledgeNote(data);
-  if (type === "challenge-reflection") submitChallengeReflection(data);
 });
 
 document.addEventListener("change", (event) => {
@@ -108,9 +106,7 @@ document.addEventListener("click", (event) => {
   if (action === "select-profile-season") selectProfileSeason(button.dataset.seasonId);
   if (action === "select-loop-analytics") selectAnalyticsLoop(button.dataset.loopId);
   if (action === "start-challenge") startChallenge(button.dataset.challengeId);
-  if (action === "complete-challenge") requestChallengeReflection(button.dataset.challengeAttemptId, "completed");
-  if (action === "drop-challenge") requestChallengeReflection(button.dataset.challengeAttemptId, "dropped");
-  if (action === "reflect-challenge") openChallengeReflection(button.dataset.challengeAttemptId);
+  if (action === "drop-challenge") dropChallenge(button.dataset.challengeAttemptId);
 });
 
 // loadState is replaced by loadStateFromSupabase (called inside initApp).
@@ -134,7 +130,6 @@ function normaliseUi(next) {
     profileSeasonId: next.profileSeasonId || "",
     editHabitId: next.editHabitId || "",
     editLoopId: next.editLoopId || "",
-    challengeReflectId: next.challengeReflectId || "",
     noteFilter: next.noteFilter || "all",
     notesExpanded: Boolean(next.notesExpanded),
   };
@@ -445,7 +440,7 @@ function renderDashboard(user, season) {
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Progress engine</h3>
-          <p class="panel-note">XP rewards completed habits, weekly targets, loops, and reflected challenges.</p>
+          <p class="panel-note">XP rewards completed habits, weekly targets, loops, and verified challenges.</p>
         </div>
         <span class="chip blue">${longest.weeks} week${longest.weeks === 1 ? "" : "s"} best streak</span>
       </div>
@@ -993,11 +988,12 @@ function renderChallenges(user, season) {
   const suggestions = challengeSuggestions(season);
   const recovery = suggestions.filter((challenge) => challenge.category === "recovery");
   const bonus = suggestions.filter((challenge) => challenge.category === "bonus");
+  const performance = overallPerformance(season);
   const attempts = userChallengeAttempts()
     .filter((attempt) => attempt.seasonId === season.id)
     .sort((a, b) => parseISO(b.updatedAt || b.startedAt) - parseISO(a.updatedAt || a.startedAt));
-  const active = attempts.filter((attempt) => attempt.status === "active" || attempt.status === "reflection");
-  const completed = attempts.filter((attempt) => attempt.status === "completed" || attempt.status === "dropped");
+  const active = attempts.filter((attempt) => attempt.status === "active");
+  const finished = attempts.filter((attempt) => ["completed", "dropped", "expired"].includes(attempt.status));
   return `
     ${pageHeader(
       "Challenges",
@@ -1008,7 +1004,7 @@ function renderChallenges(user, season) {
       ${metricCard("Level", `${xp.level}`, `${xp.toNext} XP to level ${xp.level + 1}`)}
       ${metricCard("Lifetime XP", `${xp.total}`)}
       ${metricCard("Season XP", `${xp.season}`)}
-      ${metricCard("Challenge XP", `${xp.challenge}`, "From completed quests and reflections")}
+      ${metricCard("Performance", `${performance}%`, performanceBandLabel(performance))}
     </section>
     <section class="grid two" style="margin-top:16px;">
       <div class="panel">
@@ -1019,18 +1015,18 @@ function renderChallenges(user, season) {
           </div>
         </div>
         <div class="challenge-list">
-          ${recovery.length ? recovery.map(renderChallengeSuggestion).join("") : `<div class="empty">No recovery quests are needed right now.</div>`}
+          ${recovery.length ? recovery.map(renderChallengeSuggestion).join("") : `<div class="empty">No recovery challenges right now.</div>`}
         </div>
       </div>
       <div class="panel">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Bonus</h3>
-            <p class="panel-note">More options unlock as the week gets stronger.</p>
+            <p class="panel-note">Unlocked only when performance rises above the neutral band.</p>
           </div>
         </div>
         <div class="challenge-list">
-          ${bonus.length ? bonus.map(renderChallengeSuggestion).join("") : `<div class="empty">Lift the current week above 60% to unlock bonus quests.</div>`}
+          ${bonus.length ? bonus.map(renderChallengeSuggestion).join("") : `<div class="empty">No bonus challenges right now.</div>`}
         </div>
       </div>
     </section>
@@ -1038,7 +1034,7 @@ function renderChallenges(user, season) {
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Active challenges</h3>
-          <p class="panel-note">${active.length} in progress or awaiting reflection.</p>
+          <p class="panel-note">${active.length} tracked objective${active.length === 1 ? "" : "s"} in progress.</p>
         </div>
       </div>
       <div class="challenge-list">
@@ -1048,12 +1044,12 @@ function renderChallenges(user, season) {
     <section class="panel" style="margin-top:16px;">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Completed</h3>
-          <p class="panel-note">${completed.length} reflected challenge${completed.length === 1 ? "" : "s"}.</p>
+          <h3 class="panel-title">History</h3>
+          <p class="panel-note">${finished.length} completed, dropped, or expired challenge${finished.length === 1 ? "" : "s"}.</p>
         </div>
       </div>
       <div class="challenge-list">
-        ${completed.length ? completed.map(renderChallengeAttempt).join("") : `<div class="empty">Completed and dropped challenges appear here after reflection.</div>`}
+        ${finished.length ? finished.map(renderChallengeAttempt).join("") : `<div class="empty">Completed challenges appear here with proof.</div>`}
       </div>
     </section>
   `;
@@ -1069,7 +1065,7 @@ function renderChallengeSuggestion(challenge) {
           <span class="chip amber">${escapeHtml(challenge.difficulty)}</span>
         </p>
         <p class="row-meta">${escapeHtml(challenge.description)}</p>
-        <p class="row-meta">${escapeHtml(challenge.method)} · ${challenge.xp} XP</p>
+        <p class="row-meta">${escapeHtml(challenge.reason)} · ${challenge.xp} XP</p>
       </div>
       <button class="primary-btn" data-action="start-challenge" data-challenge-id="${escapeAttr(challenge.id)}">Start</button>
     </div>
@@ -1077,66 +1073,27 @@ function renderChallengeSuggestion(challenge) {
 }
 
 function renderChallengeAttempt(attempt) {
-  const needsReflection = attempt.status === "reflection";
-  const statusLabel = needsReflection ? `Reflect ${attempt.outcome === "completed" ? "completion" : "drop"}` : titleCase(attempt.status);
+  const progress = attempt.progress || { value: 0, target: 1 };
+  const percent = challengeProgressPercent(progress);
   return `
-    <div class="challenge-card ${needsReflection ? "needs-reflection" : ""}">
+    <div class="challenge-card">
       <div>
         <p class="row-title">
           <span class="challenge-title">${escapeHtml(attempt.title)}</span>
-          <span class="chip ${attempt.category === "recovery" ? "coral" : "blue"}">${escapeHtml(statusLabel)}</span>
+          <span class="chip ${attempt.category === "recovery" ? "coral" : "blue"}">${titleCase(attempt.status)}</span>
           <span class="chip amber">${attempt.xp} XP</span>
         </p>
         <p class="row-meta">${escapeHtml(attempt.description)}</p>
-        <p class="row-meta">${escapeHtml(attempt.method)} · ${escapeHtml(attempt.difficulty)}</p>
+        <p class="row-meta">${escapeHtml(challengeProgressText(progress))}</p>
+        <div class="challenge-progress"><span style="width:${percent}%"></span></div>
+        ${attempt.evidence ? `<p class="row-meta">${escapeHtml(attempt.evidence)}</p>` : ""}
       </div>
       ${
         attempt.status === "active"
-          ? `<div class="split"><button class="primary-btn" data-action="complete-challenge" data-challenge-attempt-id="${attempt.id}">Complete</button><button class="quiet-btn" data-action="drop-challenge" data-challenge-attempt-id="${attempt.id}">Drop</button></div>`
-          : needsReflection
-            ? `<button class="primary-btn" data-action="reflect-challenge" data-challenge-attempt-id="${attempt.id}">Reflect</button>`
-            : `<span class="chip neutral">${formatDateTime(attempt.completedAt || attempt.droppedAt || attempt.updatedAt)}</span>`
+          ? `<button class="quiet-btn" data-action="drop-challenge" data-challenge-attempt-id="${attempt.id}">Drop</button>`
+          : `<span class="chip neutral">${formatDateTime(attempt.completedAt || attempt.droppedAt || attempt.expiredAt || attempt.updatedAt)}</span>`
       }
-      ${needsReflection && ui.challengeReflectId === attempt.id ? renderChallengeReflectionForm(attempt) : ""}
     </div>
-  `;
-}
-
-function renderChallengeReflectionForm(attempt) {
-  return `
-    <form class="challenge-reflection" data-form="challenge-reflection">
-      <input type="hidden" name="attemptId" value="${escapeAttr(attempt.id)}" />
-      <div class="field">
-        <label for="challenge-worked-${attempt.id}">What worked?</label>
-        <textarea id="challenge-worked-${attempt.id}" name="worked" required placeholder="What helped, even slightly?"></textarea>
-      </div>
-      <div class="field">
-        <label for="challenge-blocked-${attempt.id}">What got in the way?</label>
-        <textarea id="challenge-blocked-${attempt.id}" name="blocked" required placeholder="Friction, timing, energy, environment, or method mismatch."></textarea>
-      </div>
-      <div class="form-grid compact">
-        <div class="field">
-          <label for="challenge-again-${attempt.id}">Try similar again?</label>
-          <select id="challenge-again-${attempt.id}" name="again">
-            <option value="yes">Yes</option>
-            <option value="maybe">Maybe</option>
-            <option value="no">No</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="challenge-difficulty-${attempt.id}">Difficulty felt</label>
-          <select id="challenge-difficulty-${attempt.id}" name="difficultyFelt">
-            <option value="right">Right</option>
-            <option value="too easy">Too easy</option>
-            <option value="too hard">Too hard</option>
-          </select>
-        </div>
-        <div class="field">
-          <label>&nbsp;</label>
-          <button class="primary-btn" type="submit">Save reflection</button>
-        </div>
-      </div>
-    </form>
   `;
 }
 
@@ -1401,6 +1358,7 @@ function addSeason(data) {
   };
   state.seasons.push(season);
   state.events.push(event(user.id, season.id, "season", `Started ${name}`, nowIso()));
+  evaluateAllActiveChallenges();
   persist();
   toast("Season started.");
   render();
@@ -1460,6 +1418,7 @@ function toggleHabitLog(habitId, date) {
     ),
   );
   if (habit.logs[date]) awardHabitXp(habit, date);
+  evaluateAllActiveChallenges();
   persist();
   render();
 }
@@ -1523,6 +1482,7 @@ function updateLoop(data, form) {
   loop.steps = steps;
   state.events.push(event(loop.userId, loop.seasonId, "loop", `Updated ${loop.title}`, nowIso()));
   ui.editLoopId = "";
+  evaluateAllActiveChallenges();
   persist();
   persistUi();
   toast("Loop updated.");
@@ -1667,6 +1627,7 @@ function completeSession(completed) {
     event(state.activeUserId, season.id, "session", `${completed ? "Completed" : "Broke"} ${session.loop.title}`, endedAt.toISOString()),
   );
   awardLoopXp(savedSession);
+  evaluateAllActiveChallenges();
   if (runtime.ticker) clearInterval(runtime.ticker);
   runtime.session = null;
   runtime.ticker = null;
@@ -1797,6 +1758,7 @@ function addKnowledgeNote(data) {
     body,
     createdAt: nowIso(),
   });
+  evaluateAllActiveChallenges();
   persist();
   toast("Note saved.");
   render();
@@ -1911,7 +1873,7 @@ function coachInsight(season) {
     {
       title: challenge ? `Try: ${challenge.title}` : "Challenge system",
       body: challenge
-        ? `${challenge.method} · ${challenge.difficulty} · ${challenge.xp} XP. Open Challenges when you want a structured push.`
+        ? `${challenge.reason} ${challenge.difficulty} · ${challenge.xp} XP. Open Challenges when you want a structured push.`
         : "No urgent challenge is needed. Keep collecting evidence through habits, loops, and reflections.",
     },
     {
@@ -1966,7 +1928,7 @@ function exportCsv() {
       attempt.title,
       attempt.status,
       attempt.xp,
-      `${attempt.category}; ${attempt.method}`,
+      `${attempt.category}; ${attempt.challengeType || "tracked"}; ${attempt.evidence || attempt.reason || ""}`,
     ]),
     ...userXpEvents().map((item) => [
       "xp",
@@ -2375,194 +2337,208 @@ function loopWeekCompletedCount(loop, season, week) {
 }
 
 function challengeSuggestions(season) {
-  const activeIds = new Set(userChallengeAttempts().filter((attempt) => attempt.status !== "dropped").map((attempt) => attempt.challengeId));
-  return [...recoveryChallenges(season), ...bonusChallenges(season)]
-    .filter((challenge) => !activeIds.has(challenge.id))
-    .slice(0, 12);
+  if (!season) return [];
+  const usedIds = new Set(
+    userChallengeAttempts()
+      .filter((attempt) => attempt.seasonId === season.id)
+      .map((attempt) => attempt.challengeId),
+  );
+  const score = overallPerformance(season);
+  const suggestions = score < 60 ? recoveryChallenges(season, score) : score > 80 ? bonusChallenges(season, score) : [];
+  return suggestions.filter((challenge) => !usedIds.has(challenge.id)).slice(0, 12);
 }
 
-function recoveryChallenges(season) {
+function recoveryChallenges(season, score = overallPerformance(season)) {
+  const limit = recoverySuggestionLimit(score);
+  if (!limit) return [];
+  const current = currentWeekIndex(season);
+  const suggestions = [];
+  const weakHabits = activeHabits(season)
+    .map((habit) => ({
+      habit,
+      rate: habitRate(habit, season),
+      currentCount: weekCount(habit, season, current),
+    }))
+    .filter((item) => item.rate < 65 || item.currentCount < item.habit.weeklyTarget)
+    .sort((a, b) => a.rate - b.rate || a.currentCount - b.currentCount);
+  weakHabits.forEach(({ habit, rate, currentCount }) => {
+    const missed = Math.max(0, habit.weeklyTarget - currentCount);
+    if (score < 40 && missed >= Math.ceil(habit.weeklyTarget / 2)) {
+      suggestions.push(makeChallenge({
+        id: `recovery-window:${habit.id}:${current}`,
+        category: "recovery",
+        type: "recovery_window",
+        title: `Rebuild ${habit.title}`,
+        description: `Hit a smaller target first, then return ${habit.title} to its full weekly target.`,
+        reason: `${habit.title} is running at ${rate}% and needs a staged recovery.`,
+        difficulty: score < 30 ? "Deep" : "Standard",
+        xp: score < 30 ? 150 : 75,
+        objective: {
+          type: "recovery_window",
+          habitId: habit.id,
+          firstWeek: current,
+          firstTarget: Math.max(1, Math.ceil(habit.weeklyTarget / 2)),
+          secondWeek: Math.min(11, current + 1),
+          secondTarget: habit.weeklyTarget,
+        },
+      }));
+      return;
+    }
+    const targetDays = score < 40 ? 5 : 3;
+    suggestions.push(makeChallenge({
+      id: `recovery-habit-streak:${habit.id}:${current}:${targetDays}`,
+      category: "recovery",
+      type: "habit_streak",
+      title: `${targetDays}-day ${habit.title} streak`,
+      description: `Log ${habit.title} for ${targetDays} consecutive days. Completion is detected from habit logs.`,
+      reason: `${habit.title} is below target this week.`,
+      difficulty: targetDays >= 5 ? "Standard" : "Light",
+      xp: targetDays >= 5 ? 75 : 30,
+      objective: { type: "habit_streak", habitId: habit.id, targetDays, windowDays: targetDays + 4 },
+    }));
+  });
+  activeLoops(season)
+    .map((loop) => ({ loop, stats: loopStats(loop, season) }))
+    .filter(({ stats }) => stats.successRate < 60 || stats.broken > 0)
+    .sort((a, b) => a.stats.successRate - b.stats.successRate || b.stats.broken - a.stats.broken)
+    .forEach(({ loop, stats }) => {
+      const targetCount = score < 40 ? 3 : 2;
+      suggestions.push(makeChallenge({
+        id: `recovery-loop-count:${loop.id}:${current}:${targetCount}`,
+        category: "recovery",
+        type: "loop_completion_count",
+        title: `Restart ${loop.title}`,
+        description: `Complete ${loop.title} ${targetCount} time${targetCount === 1 ? "" : "s"} in the next 7 days.`,
+        reason: `${loop.title} is at ${stats.successRate}% completion.`,
+        difficulty: targetCount >= 3 ? "Standard" : "Light",
+        xp: targetCount >= 3 ? 75 : 30,
+        objective: { type: "loop_completion_count", loopId: loop.id, targetCount, windowDays: 7 },
+      }));
+    });
+  const inactiveDays = inactiveDayCount(season);
+  if (inactiveDays >= 2) {
+    const targetDays = score < 30 ? 5 : 3;
+    suggestions.push(makeChallenge({
+      id: `recovery-note-streak:${season.id}:${current}:${targetDays}`,
+      category: "recovery",
+      type: "knowledge_note_streak",
+      title: `${targetDays}-day reflection restart`,
+      description: `Create one knowledge note per day for ${targetDays} consecutive days.`,
+      reason: `${inactiveDays} inactive day${inactiveDays === 1 ? "" : "s"} detected.`,
+      difficulty: targetDays >= 5 ? "Standard" : "Light",
+      xp: targetDays >= 5 ? 75 : 30,
+      objective: { type: "knowledge_note_streak", targetDays, windowDays: targetDays + 4 },
+    }));
+  }
+  return suggestions.slice(0, limit);
+}
+
+function bonusChallenges(season, score = overallPerformance(season)) {
+  const limit = bonusSuggestionLimit(score);
+  if (!limit) return [];
   const current = currentWeekIndex(season);
   const habits = activeHabits(season);
   const loops = activeLoops(season);
   const suggestions = [];
-  habits.forEach((habit) => {
-    const week = Math.max(0, current - (weekCount(habit, season, current) >= habit.weeklyTarget ? 0 : 1));
-    const count = weekCount(habit, season, week);
-    const missed = Math.max(0, habit.weeklyTarget - count);
-    if (!missed) return;
-    const band = challengeBand(missed >= 3 ? "deep" : missed >= 2 ? "standard" : "light", "recovery");
-    suggestions.push({
-      id: `recovery-habit:${habit.id}:${week}`,
-      category: "recovery",
-      title: `Recover ${habit.title}`,
-      description: missed >= 3
-        ? `Complete a full reset: clear one blocker, schedule the next attempt, and do a focused 30-minute recovery block for this habit.`
-        : `Use one implementation intention: decide exactly when and where the next ${habit.title} attempt happens.`,
-      method: missed >= 3 ? "Friction removal + implementation intention" : "Implementation intention",
-      difficulty: band.difficulty,
-      xp: band.xp,
-      linkedType: "habit",
-      linkedId: habit.id,
-    });
-  });
-  const inactiveDays = inactiveDayCount(season);
-  if (inactiveDays >= 2) {
-    const band = challengeBand(inactiveDays >= 5 ? "deep" : inactiveDays >= 3 ? "standard" : "light", "recovery");
-    suggestions.push({
-      id: `recovery-inactive:${season.id}:${inactiveDays}`,
-      category: "recovery",
-      title: "Re-entry day",
-      description: "Log one small action, then write why the break happened and what the next low-friction step is.",
-      method: "Restart ritual",
-      difficulty: band.difficulty,
-      xp: band.xp,
-      linkedType: "season",
-      linkedId: season.id,
-    });
-  }
-  loops.forEach((loop) => {
-    const stats = loopStats(loop, season);
-    if (!stats.broken) return;
-    const band = challengeBand(stats.broken >= 3 ? "standard" : "light", "recovery");
-    suggestions.push({
-      id: `recovery-loop:${loop.id}:${current}`,
-      category: "recovery",
-      title: `Restart ${loop.title}`,
-      description: "Run the loop once with permission to shorten one step. The win is restarting the chain.",
-      method: "Minimum viable loop",
-      difficulty: band.difficulty,
-      xp: band.xp,
-      linkedType: "loop",
-      linkedId: loop.id,
-    });
-  });
-  return suggestions.slice(0, 5);
-}
-
-function bonusChallenges(season) {
-  const metrics = seasonMetrics(season);
-  const habits = activeHabits(season);
-  const loops = activeLoops(season);
-  const notes = userNotes().filter((note) => note.seasonId === season.id);
-  const suggestions = [];
   const strongest = habits
     .map((habit) => ({ habit, rate: habitRate(habit, season), streak: weeklyStreak(habit, season) }))
     .sort((a, b) => b.rate - a.rate || b.streak - a.streak)[0];
-  const failedTechnique = failedChallengeReflection();
-  if (failedTechnique) {
-    suggestions.push({
-      id: `bonus-alternative-method:${failedTechnique.id}:${currentWeekIndex(season)}`,
+  if (strongest) {
+    suggestions.push(makeChallenge({
+      id: `bonus-habit-week-streak:${strongest.habit.id}:${current}`,
       category: "bonus",
-      title: "Try a different method",
-      description: `The last ${failedTechnique.method} attempt did not fit. Test a lower-friction approach and compare how it feels.`,
-      method: "Method substitution",
-      difficulty: "Light",
-      xp: 25,
-      linkedType: "season",
-      linkedId: season.id,
-    });
-  }
-  const successfulTechnique = successfulChallengeReflection();
-  if (successfulTechnique && metrics.weeklyScore >= 60) {
-    suggestions.push({
-      id: `bonus-repeat-method:${successfulTechnique.method}:${currentWeekIndex(season)}`,
-      category: "bonus",
-      title: `Scale ${successfulTechnique.method}`,
-      description: "Repeat a method that previously worked, but increase difficulty by one small notch.",
-      method: successfulTechnique.method,
-      difficulty: "Standard",
-      xp: 50,
-      linkedType: "season",
-      linkedId: season.id,
-    });
-  }
-  if (metrics.weeklyScore >= 60 && strongest) {
-    suggestions.push({
-      id: `bonus-identity:${strongest.habit.id}:${currentWeekIndex(season)}`,
-      category: "bonus",
-      title: `Identity proof: ${strongest.habit.title}`,
-      description: "Write one sentence that starts with 'I am the kind of person who...' and immediately log one proof action.",
-      method: "Identity rehearsal",
-      difficulty: "Light",
-      xp: 25,
-      linkedType: "habit",
-      linkedId: strongest.habit.id,
-    });
-  }
-  if (metrics.weeklyScore >= 80 && loops.length) {
-    const loop = loops[0];
-    suggestions.push({
-      id: `bonus-loop-design:${loop.id}:${currentWeekIndex(season)}`,
-      category: "bonus",
-      title: `Upgrade ${loop.title}`,
-      description: "Improve one step in the loop by reducing friction, preparing materials, or making the next action obvious.",
-      method: "Environment design",
-      difficulty: "Standard",
-      xp: 50,
-      linkedType: "loop",
-      linkedId: loop.id,
-    });
-  }
-  if (metrics.weeklyScore >= 80) {
-    suggestions.push({
-      id: `bonus-temptation:${season.id}:${currentWeekIndex(season)}`,
-      category: "bonus",
-      title: "Temptation bundle",
-      description: "Pair a useful action with something enjoyable, then test whether the pairing makes starting easier.",
-      method: "Temptation bundling",
-      difficulty: "Standard",
-      xp: 50,
-      linkedType: "season",
-      linkedId: season.id,
-    });
-  }
-  if (metrics.weeklyScore >= 100) {
-    suggestions.push({
-      id: `bonus-deep-review:${season.id}:${currentWeekIndex(season)}`,
-      category: "bonus",
-      title: "Deep weekly review",
-      description: "Review the week, name the strongest method, name the weakest friction point, and choose one next experiment.",
-      method: "Reflection prompt",
+      type: "habit_week_streak",
+      title: `Three strong weeks: ${strongest.habit.title}`,
+      description: `Hit the weekly target for ${strongest.habit.title} for 3 weeks in a row.`,
+      reason: `${strongest.habit.title} is strong enough for a longer streak challenge.`,
       difficulty: "Deep",
-      xp: 100,
-      linkedType: "season",
-      linkedId: season.id,
-    });
-    suggestions.push({
-      id: `bonus-habit-stack:${season.id}:${currentWeekIndex(season)}`,
-      category: "bonus",
-      title: "Habit stack extension",
-      description: "Attach one new two-minute behaviour after an existing reliable habit and test it today.",
-      method: "Habit stacking",
-      difficulty: "Light",
-      xp: 25,
-      linkedType: "season",
-      linkedId: season.id,
-    });
+      xp: 150,
+      objective: { type: "habit_week_streak", habitId: strongest.habit.id, targetWeeks: 3, startWeek: current },
+    }));
   }
-  if (notes.length && metrics.weeklyScore >= 60) {
-    suggestions.push({
-      id: `bonus-note-review:${season.id}:${notes.length}`,
+  const weakLoop = loops
+    .map((loop) => ({ loop, stats: loopStats(loop, season) }))
+    .sort((a, b) => a.stats.successRate - b.stats.successRate)[0];
+  const upgradeHabit = strongest?.habit && weakLoop && !loopHasHabit(weakLoop.loop, strongest.habit.id) ? strongest.habit : null;
+  if (weakLoop && upgradeHabit) {
+    suggestions.push(makeChallenge({
+      id: `bonus-loop-upgrade:${weakLoop.loop.id}:${upgradeHabit.id}:${current}`,
       category: "bonus",
-      title: "Turn a note into action",
-      description: "Pick one saved note and convert it into a concrete next action before the day ends.",
-      method: "Reflection to action",
-      difficulty: "Light",
-      xp: 25,
-      linkedType: "season",
-      linkedId: season.id,
-    });
+      type: "loop_upgrade",
+      title: `Upgrade ${weakLoop.loop.title}`,
+      description: `Add ${upgradeHabit.title} to ${weakLoop.loop.title}, then complete the upgraded loop 3 times.`,
+      reason: `${upgradeHabit.title} is strong and ${weakLoop.loop.title} can absorb it.`,
+      difficulty: "Deep",
+      xp: 150,
+      objective: { type: "loop_upgrade", loopId: weakLoop.loop.id, habitId: upgradeHabit.id, targetRuns: 3, windowDays: 21 },
+    }));
   }
-  const baseLimit = metrics.weeklyScore >= 100 ? 6 : metrics.weeklyScore >= 80 ? 4 : metrics.weeklyScore >= 60 ? 2 : 0;
-  const limit = failedTechnique ? Math.max(1, baseLimit) : baseLimit;
+  const bestLoop = loops
+    .map((loop) => ({ loop, stats: loopStats(loop, season) }))
+    .sort((a, b) => b.stats.successRate - a.stats.successRate)[0];
+  if (bestLoop) {
+    suggestions.push(makeChallenge({
+      id: `bonus-loop-streak:${bestLoop.loop.id}:${current}`,
+      category: "bonus",
+      type: "loop_streak",
+      title: `Three-week ${bestLoop.loop.title} streak`,
+      description: `Hit the weekly loop target for ${bestLoop.loop.title} for 3 consecutive weeks.`,
+      reason: `${bestLoop.loop.title} is ready for a harder consistency challenge.`,
+      difficulty: "Deep",
+      xp: 150,
+      objective: { type: "loop_streak", loopId: bestLoop.loop.id, targetWeeks: 3, startWeek: current },
+    }));
+  }
+  suggestions.push(makeChallenge({
+    id: `bonus-note-streak:${season.id}:${current}`,
+    category: "bonus",
+    type: "knowledge_note_streak",
+    title: "10-day knowledge streak",
+    description: "Create a knowledge note for 10 consecutive days.",
+    reason: "Your current season performance is strong enough for deeper reflection.",
+    difficulty: "Deep",
+    xp: 100,
+    objective: { type: "knowledge_note_streak", targetDays: 10, windowDays: 14 },
+  }));
   return suggestions.slice(0, limit);
 }
 
-function challengeBand(size, category) {
-  if (size === "deep") return { difficulty: "Deep", xp: category === "recovery" ? 150 : 100 };
-  if (size === "standard") return { difficulty: "Standard", xp: category === "recovery" ? 75 : 50 };
-  return { difficulty: "Light", xp: category === "recovery" ? 30 : 25 };
+function makeChallenge({ id, category, type, title, description, reason, difficulty, xp, objective }) {
+  return { id, category, type, title, description, reason, difficulty, xp, objective };
+}
+
+function overallPerformance(season) {
+  const metrics = seasonMetrics(season);
+  const parts = [];
+  if (activeHabits(season).length) parts.push(metrics.weeklyScore, metrics.averageHabitRate);
+  if (activeLoops(season).length) parts.push(metrics.loopCompletionRate);
+  if (!parts.length) return 0;
+  return clamp(Math.round(parts.reduce((sum, value) => sum + value, 0) / parts.length), 0, 100);
+}
+
+function performanceBandLabel(score) {
+  if (score < 60) return "Recovery zone";
+  if (score <= 80) return "Neutral zone";
+  return "Bonus zone";
+}
+
+function recoverySuggestionLimit(score) {
+  if (score >= 60) return 0;
+  if (score >= 50) return 1;
+  if (score >= 40) return 2;
+  if (score >= 30) return 3;
+  return 5;
+}
+
+function bonusSuggestionLimit(score) {
+  if (score <= 80) return 0;
+  if (score < 90) return 1;
+  if (score < 100) return 2;
+  return 4;
+}
+
+function loopHasHabit(loop, habitId) {
+  return Boolean(loop?.steps?.some((step) => step.habitId === habitId));
 }
 
 function inactiveDayCount(season) {
@@ -2575,18 +2551,6 @@ function inactiveDayCount(season) {
     count += 1;
   }
   return count;
-}
-
-function successfulChallengeReflection() {
-  return userChallengeAttempts()
-    .filter((attempt) => attempt.status === "completed" && attempt.reflection?.again === "yes")
-    .sort((a, b) => parseISO(b.completedAt || b.updatedAt) - parseISO(a.completedAt || a.updatedAt))[0];
-}
-
-function failedChallengeReflection() {
-  return userChallengeAttempts()
-    .filter((attempt) => attempt.reflection && (attempt.status === "dropped" || attempt.reflection.again === "no" || attempt.reflection.difficultyFelt === "too hard"))
-    .sort((a, b) => parseISO(b.droppedAt || b.completedAt || b.updatedAt) - parseISO(a.droppedAt || a.completedAt || a.updatedAt))[0];
 }
 
 function findSuggestedChallenge(challengeId) {
@@ -2606,108 +2570,245 @@ function startChallenge(challengeId) {
     title: challenge.title,
     description: challenge.description,
     category: challenge.category,
-    method: challenge.method,
     difficulty: challenge.difficulty,
     xp: challenge.xp,
-    linkedType: challenge.linkedType,
-    linkedId: challenge.linkedId,
+    challengeType: challenge.type,
+    objective: { ...challenge.objective },
+    reason: challenge.reason,
+    progress: { value: 0, target: challenge.objective.targetDays || challenge.objective.targetWeeks || challenge.objective.targetCount || challenge.objective.targetRuns || 1 },
     status: "active",
     startedAt: nowIso(),
+    deadlineDate: challenge.objective.windowDays ? toISO(addDays(startOfToday(), challenge.objective.windowDays - 1)) : "",
     updatedAt: nowIso(),
   });
+  evaluateAllActiveChallenges();
   state.events.push(event(state.activeUserId, season.id, "challenge", `Started ${challenge.title}`, nowIso()));
   persist();
   toast("Challenge started.");
   render();
 }
 
-function requestChallengeReflection(attemptId, outcome) {
+function dropChallenge(attemptId) {
   const attempt = state.challengeAttempts.find((item) => item.id === attemptId && item.userId === state.activeUserId);
   if (!attempt || attempt.status !== "active") return;
-  attempt.status = "reflection";
-  attempt.outcome = outcome === "completed" ? "completed" : "dropped";
+  attempt.status = "dropped";
+  attempt.droppedAt = nowIso();
   attempt.updatedAt = nowIso();
-  ui.challengeReflectId = attempt.id;
+  attempt.evidence = "Dropped by user. No completion XP awarded.";
   persist();
-  persistUi();
+  toast("Challenge dropped.");
   render();
 }
 
-function openChallengeReflection(attemptId) {
-  ui.challengeReflectId = attemptId || "";
-  persistUi();
-  render();
-}
-
-function submitChallengeReflection(data) {
-  const attempt = state.challengeAttempts.find((item) => item.id === data.attemptId && item.userId === state.activeUserId);
-  if (!attempt || attempt.status !== "reflection") return;
-  const worked = String(data.worked || "").trim();
-  const blocked = String(data.blocked || "").trim();
-  if (!worked || !blocked) return;
-  const completed = attempt.outcome === "completed";
-  const at = nowIso();
-  attempt.status = completed ? "completed" : "dropped";
-  attempt.reflection = {
-    worked,
-    blocked,
-    again: data.again || "maybe",
-    difficultyFelt: data.difficultyFelt || "right",
-    createdAt: at,
-  };
-  attempt.updatedAt = at;
-  if (completed) attempt.completedAt = at;
-  else attempt.droppedAt = at;
-  state.knowledgeNotes.push({
-    id: uid("note"),
-    userId: state.activeUserId,
-    seasonId: attempt.seasonId,
-    tagType: "challenge",
-    tagId: attempt.id,
-    tagLabel: attempt.title,
-    title: attempt.title,
-    body: challengeReflectionBody(attempt),
-    createdAt: at,
-  });
-  if (completed) {
-    awardXp({
-      awardKey: `challenge-complete:${attempt.id}`,
-      eventType: "challenge_complete",
-      xpEarned: attempt.xp,
-      seasonId: attempt.seasonId,
-      metadata: { challengeId: attempt.challengeId, title: attempt.title, method: attempt.method },
-      label: `Challenge completed: ${attempt.title}`,
-      at,
+function evaluateAllActiveChallenges() {
+  if (!state?.challengeAttempts) return;
+  state.challengeAttempts
+    .filter((attempt) => attempt.userId === state.activeUserId && attempt.status === "active")
+    .forEach((attempt) => {
+      const progress = evaluateChallengeProgress(attempt);
+      attempt.progress = progress;
+      attempt.updatedAt = nowIso();
+      if (progress.expired) expireChallenge(attempt, progress.evidence);
+      else if (progress.complete) completeChallenge(attempt, progress.evidence);
     });
-  }
+}
+
+function completeChallenge(attempt, evidence) {
+  if (!attempt || attempt.status !== "active") return;
+  const at = nowIso();
+  attempt.status = "completed";
+  attempt.completedAt = at;
+  attempt.updatedAt = at;
+  attempt.evidence = evidence || "Objective completed from tracked activity.";
   awardXp({
-    awardKey: `challenge-reflection:${attempt.id}`,
-    eventType: "challenge_reflection",
-    xpEarned: XP_RULES.reflection,
+    awardKey: `challenge-complete:${attempt.id}`,
+    eventType: "challenge_complete",
+    xpEarned: attempt.xp,
     seasonId: attempt.seasonId,
-    metadata: { challengeId: attempt.challengeId, title: attempt.title, outcome: attempt.outcome },
-    label: `Challenge reflected: ${attempt.title}`,
+    metadata: { challengeId: attempt.challengeId, challengeType: attempt.challengeType, title: attempt.title, evidence: attempt.evidence },
+    label: `Challenge completed: ${attempt.title}`,
     at,
   });
-  ui.challengeReflectId = "";
-  persist();
-  persistUi();
-  toast(completed ? "Challenge completed and reflected." : "Challenge reflected.");
-  render();
 }
 
-function challengeReflectionBody(attempt) {
-  return [
-    `Challenge: ${attempt.title}`,
-    `Outcome: ${attempt.status}`,
-    `Method: ${attempt.method}`,
-    `Difficulty: ${attempt.difficulty}`,
-    "",
-    `What worked: ${attempt.reflection.worked}`,
-    `What got in the way: ${attempt.reflection.blocked}`,
-    `Try similar again: ${attempt.reflection.again}`,
-    `Difficulty felt: ${attempt.reflection.difficultyFelt}`,
-  ].join("\n");
+function expireChallenge(attempt, evidence) {
+  if (!attempt || attempt.status !== "active") return;
+  attempt.status = "expired";
+  attempt.expiredAt = nowIso();
+  attempt.updatedAt = nowIso();
+  attempt.evidence = evidence || "Challenge window expired before the objective was completed.";
+}
+
+function evaluateChallengeProgress(attempt) {
+  if (!attempt?.objective) return { value: 0, target: 1, expired: true, evidence: "Legacy self-attested challenge retired." };
+  const objective = attempt.objective;
+  if (attempt.deadlineDate && parseISO(todayISO()) > parseISO(attempt.deadlineDate)) {
+    return { value: attempt.progress?.value || 0, target: attempt.progress?.target || 1, expired: true, evidence: `Expired after ${formatDate(attempt.deadlineDate)}.` };
+  }
+  if (objective.type === "habit_streak") return evaluateHabitStreakChallenge(attempt);
+  if (objective.type === "habit_week_streak") return evaluateHabitWeekStreakChallenge(attempt);
+  if (objective.type === "loop_completion_count") return evaluateLoopCompletionChallenge(attempt);
+  if (objective.type === "loop_streak") return evaluateLoopStreakChallenge(attempt);
+  if (objective.type === "loop_upgrade") return evaluateLoopUpgradeChallenge(attempt);
+  if (objective.type === "knowledge_note_streak") return evaluateKnowledgeNoteStreakChallenge(attempt);
+  if (objective.type === "recovery_window") return evaluateRecoveryWindowChallenge(attempt);
+  return { value: 0, target: 1, expired: true, evidence: "Unknown challenge objective retired." };
+}
+
+function evaluateHabitStreakChallenge(attempt) {
+  const habit = userHabits().find((item) => item.id === attempt.objective.habitId);
+  if (!habit) return { value: 0, target: attempt.objective.targetDays, expired: true, evidence: "Habit no longer exists." };
+  const result = longestConsecutiveRun(Object.keys(habit.logs || {}), toISO(parseISO(attempt.startedAt)), todayISO());
+  const target = attempt.objective.targetDays;
+  return {
+    value: result.longest,
+    target,
+    complete: result.longest >= target,
+    evidence: result.longest >= target ? `${habit.title} logged for ${target} consecutive days.` : `${result.longest}/${target} consecutive days logged.`,
+  };
+}
+
+function evaluateHabitWeekStreakChallenge(attempt) {
+  const season = state.seasons.find((item) => item.id === attempt.seasonId);
+  const habit = userHabits().find((item) => item.id === attempt.objective.habitId);
+  if (!season || !habit) return { value: 0, target: attempt.objective.targetWeeks, expired: true, evidence: "Habit or season no longer exists." };
+  const startWeek = Number(attempt.objective.startWeek) || currentWeekIndexForDate(season, attempt.startedAt);
+  const target = attempt.objective.targetWeeks;
+  const result = longestSuccessfulWeekRun(startWeek, currentWeekIndex(season), (week) => weekCount(habit, season, week) >= habit.weeklyTarget);
+  return {
+    value: result.longest,
+    target,
+    complete: result.longest >= target,
+    evidence: result.longest >= target ? `${habit.title} hit target for ${target} consecutive weeks.` : `${result.longest}/${target} successful weeks.`,
+  };
+}
+
+function evaluateLoopCompletionChallenge(attempt) {
+  const loop = userLoops().find((item) => item.id === attempt.objective.loopId);
+  if (!loop) return { value: 0, target: attempt.objective.targetCount, expired: true, evidence: "Loop no longer exists." };
+  const count = completedLoopRunsSince(loop.id, attempt.startedAt, attempt.deadlineDate);
+  const target = attempt.objective.targetCount;
+  return {
+    value: count,
+    target,
+    complete: count >= target,
+    evidence: count >= target ? `${loop.title} completed ${target} times.` : `${count}/${target} loop completions recorded.`,
+  };
+}
+
+function evaluateLoopStreakChallenge(attempt) {
+  const season = state.seasons.find((item) => item.id === attempt.seasonId);
+  const loop = userLoops().find((item) => item.id === attempt.objective.loopId);
+  if (!season || !loop) return { value: 0, target: attempt.objective.targetWeeks, expired: true, evidence: "Loop or season no longer exists." };
+  const startWeek = Number(attempt.objective.startWeek) || currentWeekIndexForDate(season, attempt.startedAt);
+  const target = attempt.objective.targetWeeks;
+  const result = longestSuccessfulWeekRun(startWeek, currentWeekIndex(season), (week) => loopWeekCompletedCount(loop, season, week) >= loop.weeklyTarget);
+  return {
+    value: result.longest,
+    target,
+    complete: result.longest >= target,
+    evidence: result.longest >= target ? `${loop.title} hit target for ${target} consecutive weeks.` : `${result.longest}/${target} successful loop weeks.`,
+  };
+}
+
+function evaluateLoopUpgradeChallenge(attempt) {
+  const loop = userLoops().find((item) => item.id === attempt.objective.loopId);
+  const habit = userHabits().find((item) => item.id === attempt.objective.habitId);
+  const target = attempt.objective.targetRuns;
+  if (!loop || !habit) return { value: 0, target, expired: true, evidence: "Loop or habit no longer exists." };
+  if (!loopHasHabit(loop, habit.id)) return { value: 0, target, complete: false, evidence: `Add ${habit.title} to ${loop.title} first.` };
+  if (!attempt.objective.upgradedAt) attempt.objective.upgradedAt = nowIso();
+  const count = completedLoopRunsSince(loop.id, attempt.objective.upgradedAt, attempt.deadlineDate);
+  return {
+    value: count,
+    target,
+    complete: count >= target,
+    evidence: count >= target ? `${loop.title} includes ${habit.title} and was completed ${target} times.` : `${count}/${target} upgraded loop completions recorded.`,
+  };
+}
+
+function evaluateKnowledgeNoteStreakChallenge(attempt) {
+  const dates = userNotes()
+    .filter((note) => note.seasonId === attempt.seasonId && note.tagType !== "challenge")
+    .map((note) => toISO(parseISO(note.createdAt)));
+  const result = longestConsecutiveRun(dates, toISO(parseISO(attempt.startedAt)), todayISO());
+  const target = attempt.objective.targetDays;
+  return {
+    value: result.longest,
+    target,
+    complete: result.longest >= target,
+    evidence: result.longest >= target ? `${target} consecutive days of knowledge notes created.` : `${result.longest}/${target} note streak days recorded.`,
+  };
+}
+
+function evaluateRecoveryWindowChallenge(attempt) {
+  const season = state.seasons.find((item) => item.id === attempt.seasonId);
+  const habit = userHabits().find((item) => item.id === attempt.objective.habitId);
+  if (!season || !habit) return { value: 0, target: 2, expired: true, evidence: "Habit or season no longer exists." };
+  const firstMet = weekCount(habit, season, attempt.objective.firstWeek) >= attempt.objective.firstTarget;
+  const secondMet = weekCount(habit, season, attempt.objective.secondWeek) >= attempt.objective.secondTarget;
+  const value = Number(firstMet) + Number(firstMet && secondMet);
+  return {
+    value,
+    target: 2,
+    complete: firstMet && secondMet,
+    evidence: firstMet && secondMet
+      ? `${habit.title} rebuilt through staged weekly targets.`
+      : `${value}/2 staged recovery targets completed.`,
+  };
+}
+
+function challengeProgressPercent(progress = {}) {
+  const target = Math.max(1, Number(progress.target) || 1);
+  const value = clamp(Number(progress.value) || 0, 0, target);
+  return clamp(Math.round((value / target) * 100), 0, 100);
+}
+
+function challengeProgressText(progress = {}) {
+  if (progress.evidence) return progress.evidence;
+  const target = Math.max(1, Number(progress.target) || 1);
+  const value = clamp(Number(progress.value) || 0, 0, target);
+  return `${value}/${target} tracked`;
+}
+
+function longestConsecutiveRun(dates, startDate, endDate) {
+  const marked = new Set((dates || []).map((date) => toISO(parseISO(date))));
+  const start = parseISO(startDate);
+  const end = parseISO(endDate);
+  let longest = 0;
+  let current = 0;
+  for (let day = start; day <= end; day = addDays(day, 1)) {
+    if (marked.has(toISO(day))) {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+  return { longest, current };
+}
+
+function longestSuccessfulWeekRun(startWeek, endWeek, predicate) {
+  let longest = 0;
+  let current = 0;
+  for (let week = Math.max(0, Number(startWeek) || 0); week <= Math.max(0, Number(endWeek) || 0); week += 1) {
+    if (predicate(week)) {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else {
+      current = 0;
+    }
+  }
+  return { longest, current };
+}
+
+function completedLoopRunsSince(loopId, startAt, endDate = "") {
+  const start = parseISO(startAt);
+  const end = endDate ? addDays(parseISO(endDate), 1) : addDays(startOfToday(), 1);
+  return userSessions().filter((session) => {
+    const ended = parseISO(session.endedAt || session.startedAt);
+    return session.loopId === loopId && session.completed && ended >= start && ended < end;
+  }).length;
 }
 
 function seasonMetrics(season) {
@@ -3102,6 +3203,7 @@ async function initApp() {
   if (currentUser) {
     state = await loadStateFromSupabase(currentUser.id);
     reconcileXpAchievements({ silent: true });
+    evaluateAllActiveChallenges();
     persist();
   }
 
@@ -3114,6 +3216,7 @@ async function initApp() {
       currentUser = newUser;
       state = await loadStateFromSupabase(currentUser.id);
       reconcileXpAchievements({ silent: true });
+      evaluateAllActiveChallenges();
       persist();
       ui = normaliseUi({});
       render();
