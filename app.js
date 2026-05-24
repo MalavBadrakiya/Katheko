@@ -714,12 +714,12 @@ function renderLoops(user, season) {
 function renderLoopRow(loop, season, habits) {
   if (ui.editLoopId === loop.id) return renderLoopEditRow(loop, habits);
   return `
-    <div class="row">
+    <div class="row loop-row">
       <div>
         <p class="row-title">${escapeHtml(loop.title)} <span class="chip blue">${loop.steps.length} steps</span></p>
         <p class="row-meta">${formatDuration(loopDuration(loop))} · ${loop.weeklyTarget}x/week · ${loopCompletionText(loop, season)}</p>
       </div>
-      <div class="split">
+      <div class="split loop-actions">
         <button class="primary-btn" data-action="start-loop" data-loop-id="${loop.id}">Start</button>
         <button class="quiet-btn" data-action="edit-loop" data-loop-id="${loop.id}">Edit</button>
         <button class="quiet-btn" data-action="remove-loop" data-loop-id="${loop.id}">Archive</button>
