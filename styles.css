@@ -271,6 +271,16 @@ textarea:focus-visible {
   gap: 8px;
 }
 
+.desktop-nav {
+  display: grid;
+  gap: 8px;
+}
+
+.mobile-nav,
+.mobile-more-menu {
+  display: none;
+}
+
 .nav button {
   min-height: 44px;
   border: 3px solid var(--ink);
@@ -391,6 +401,25 @@ textarea:focus-visible {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.insights-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  gap: 16px;
+}
+
+.overview-panel {
+  min-height: 260px;
+}
+
+.metric-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.metric.metric-purple {
+  background: var(--pink);
+}
+
 .panel {
   background: var(--paper-strong);
   border: 3px solid var(--ink);
@@ -405,6 +434,22 @@ textarea:focus-visible {
 
 .panel:nth-of-type(3n + 2) {
   background: var(--pink);
+}
+
+.metric-stack .metric {
+  background: var(--pink);
+}
+
+.panel.overview-panel {
+  background: var(--coral-soft);
+}
+
+.panel.habit-grid-panel {
+  background: var(--pink);
+}
+
+.panel.challenge-panel {
+  background: var(--paper-strong);
 }
 
 .panel.flush {
@@ -438,9 +483,12 @@ textarea:focus-visible {
 
 .metric {
   min-height: 140px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  position: relative;
+  display: grid;
+  min-width: 0;
+  transform-style: preserve-3d;
+  transition: transform 240ms ease;
+  cursor: pointer;
 }
 
 .grid.four .metric:nth-child(1) {
@@ -459,26 +507,72 @@ textarea:focus-visible {
   background: var(--coral-soft);
 }
 
+.grid.four .metric {
+  min-height: 154px;
+  gap: 10px;
+}
+
+.grid.four .metric .metric-value {
+  font-size: clamp(2.25rem, 3.6vw, 3.15rem);
+  line-height: 0.9;
+}
+
+.metric.flipped .metric-front {
+  opacity: 0;
+  transform: rotateY(180deg);
+  pointer-events: none;
+}
+
+.metric.flipped .metric-back {
+  opacity: 1;
+  transform: rotateY(0);
+}
+
 .metric-label {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 0;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .metric-value {
   margin-top: 8px;
   font-family: var(--display-font);
-  font-size: clamp(2.45rem, 6vw, 4.2rem);
+  font-size: clamp(2.2rem, 4.8vw, 3.7rem);
   font-weight: 900;
-  line-height: 0.88;
+  line-height: 0.95;
+  overflow-wrap: anywhere;
 }
 
-.metric-foot {
+.metric-face {
+  grid-area: 1 / 1;
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  justify-content: space-between;
+  backface-visibility: hidden;
+  transition:
+    opacity 180ms ease,
+    transform 240ms ease;
+}
+
+.metric-back {
+  opacity: 0;
+  transform: rotateY(-180deg);
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.metric-detail {
+  margin: 0;
   color: var(--muted);
-  font-size: 0.84rem;
-  font-weight: 750;
+  font-size: 0.86rem;
+  font-weight: 850;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .split {
@@ -828,11 +922,35 @@ textarea:focus-visible {
   gap: 12px;
 }
 
+.habit-performance-item {
+  display: grid;
+  gap: 7px;
+  padding-bottom: 12px;
+  border-bottom: 3px solid var(--ink);
+}
+
+.habit-performance-item:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
 .bar-row {
   display: grid;
-  grid-template-columns: 130px minmax(0, 1fr) 78px;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 12px;
+  row-gap: 7px;
   align-items: center;
+}
+
+.bar-row.secondary .bar-label {
+  color: var(--muted);
+}
+
+.bar-subheading {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 900;
 }
 
 .bar-label {
@@ -844,6 +962,9 @@ textarea:focus-visible {
 }
 
 .bar-track {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 220px;
   height: 14px;
   border: 3px solid var(--ink);
   border-radius: 999px;
@@ -852,9 +973,14 @@ textarea:focus-visible {
 }
 
 .bar-fill {
+  display: block;
   height: 100%;
   width: 0;
   background: var(--blue);
+}
+
+.bar-fill.overall {
+  background: var(--green);
 }
 
 .bar-value {
@@ -1129,8 +1255,34 @@ textarea:focus-visible {
   }
 
   .nav {
-    grid-template-columns: repeat(7, minmax(0, 1fr));
+    position: relative;
+    display: block;
+  }
+
+  .desktop-nav {
+    display: none;
+  }
+
+  .mobile-nav {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 6px;
+  }
+
+  .mobile-more-menu {
+    position: absolute;
+    right: 39%;
+    bottom: calc(100% + 10px);
+    z-index: 35;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    width: min(220px, 40vw);
+    padding: 8px;
+    border: 3px solid var(--ink);
+    border-radius: var(--radius);
+    background: var(--paper-strong);
+    box-shadow: var(--shadow-small);
   }
 
   .nav-profile {
@@ -1151,9 +1303,42 @@ textarea:focus-visible {
   }
 
   .grid.two,
-  .grid.three,
-  .grid.four {
+  .grid.three {
     grid-template-columns: 1fr;
+  }
+
+  .grid.four {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .insights-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .grid.four .metric,
+  .metric-stack .metric {
+    min-height: 112px;
+    padding: 10px;
+  }
+
+  .grid.four .metric .metric-label,
+  .metric-stack .metric .metric-label {
+    font-size: 0.62rem;
+  }
+
+  .grid.four .metric .metric-value,
+  .metric-stack .metric .metric-value {
+    font-size: clamp(1.45rem, 7vw, 2.25rem);
+    line-height: 1;
+  }
+
+  .grid.four .metric .metric-detail,
+  .metric-stack .metric .metric-detail {
+    font-size: 0.62rem;
   }
 
   .toast {
@@ -1194,12 +1379,16 @@ textarea:focus-visible {
   }
 
   .nav {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    display: block;
   }
 
   .nav button {
-    min-height: 44px;
-    font-size: 0.72rem;
+    min-height: 50px;
+    font-size: 0.68rem;
+  }
+
+  .week-controls {
+    justify-content: flex-start;
   }
 
   .form-grid,
@@ -1244,6 +1433,10 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .bar-track {
+    min-width: 0;
+  }
+
   .bar-value {
     text-align: left;
   }
@@ -1265,6 +1458,45 @@ textarea:focus-visible {
 }
 
 @media (max-width: 460px) {
+  .grid {
+    gap: 10px;
+  }
+
+  .grid.four {
+    gap: 8px;
+  }
+
+  .grid.four .metric,
+  .metric-stack .metric {
+    min-height: 96px;
+    padding: 8px;
+    box-shadow: 2px 2px 0 var(--ink);
+  }
+
+  .grid.four .metric .metric-label,
+  .metric-stack .metric .metric-label {
+    font-size: 0.54rem;
+  }
+
+  .grid.four .metric .metric-value,
+  .metric-stack .metric .metric-value {
+    font-size: clamp(1.1rem, 6vw, 1.75rem);
+  }
+
+  .grid.four .metric .metric-detail,
+  .metric-stack .metric .metric-detail {
+    font-size: 0.54rem;
+  }
+
+  .mobile-nav {
+    gap: 5px;
+  }
+
+  .mobile-more-menu {
+    right: 35%;
+    width: min(190px, 48vw);
+  }
+
   .habit-status-line {
     grid-template-columns: 1fr 1fr;
   }

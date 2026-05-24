@@ -7,7 +7,6 @@ const views = [
   ["habits", "Habits"],
   ["loops", "Loops"],
   ["analytics", "Analytics"],
-  ["challenges", "Challenges"],
   ["profile", "Profile"],
   ["coach", "Coach"],
 ];
@@ -33,6 +32,7 @@ let runtime     = {
   ticker: null,
   audio: null,
   serviceWorkerReady: null,
+  metricTimer: null,
 };
 
 registerServiceWorker();
@@ -76,6 +76,8 @@ document.addEventListener("click", (event) => {
   const action = button.dataset.action;
 
   if (action === "view") setView(button.dataset.view);
+  if (action === "toggle-mobile-more") toggleMobileMore();
+  if (action === "flip-metric") flipMetric(button.dataset.metricId);
   if (action === "sign-out") handleSignOut();
   if (action === "auth-toggle") toggleAuthMode();
   if (action === "toggle-habit") toggleHabitLog(button.dataset.habitId, button.dataset.date);
@@ -83,6 +85,7 @@ document.addEventListener("click", (event) => {
   if (action === "cancel-edit-habit") setEditHabit("");
   if (action === "archive-habit") archiveHabit(button.dataset.habitId, true);
   if (action === "restore-habit") archiveHabit(button.dataset.habitId, false);
+  if (action === "delete-habit") deleteHabit(button.dataset.habitId);
   if (action === "start-loop") startSession(button.dataset.loopId);
   if (action === "pause-session") pauseSession();
   if (action === "resume-session") resumeSession();
@@ -90,6 +93,8 @@ document.addEventListener("click", (event) => {
   if (action === "abandon-session") completeSession(false);
   if (action === "discard-session") discardSession();
   if (action === "remove-loop") archiveLoop(button.dataset.loopId);
+  if (action === "restore-loop") archiveLoop(button.dataset.loopId, false);
+  if (action === "delete-loop") deleteLoop(button.dataset.loopId);
   if (action === "enable-notifications") enableNotifications();
   if (action === "export-csv") exportCsv();
   if (action === "export-json") exportJson();
@@ -123,7 +128,7 @@ function loadUi() {
 
 function normaliseUi(next) {
   return {
-    view: next.view || "dashboard",
+    view: next.view === "challenges" ? "coach" : next.view || "dashboard",
     analyticsHabitId: next.analyticsHabitId || "",
     analyticsLoopId: next.analyticsLoopId || "",
     habitWeekOffset: Number(next.habitWeekOffset) || 0,
@@ -132,6 +137,8 @@ function normaliseUi(next) {
     editLoopId: next.editLoopId || "",
     noteFilter: next.noteFilter || "all",
     notesExpanded: Boolean(next.notesExpanded),
+    mobileMoreOpen: Boolean(next.mobileMoreOpen),
+    flippedMetricId: next.flippedMetricId || "",
   };
 }
 
@@ -323,6 +330,7 @@ function event(userId, seasonId, type, label, at = nowIso()) {
 
 function persist() {
   if (!currentUser || !state) return;
+  recomputeXpAchievements();
   // Fire-and-forget — UI updates optimistically; save happens in background.
   _db.from("user_state")
     .upsert({ user_id: currentUser.id, data: state, updated_at: new Date().toISOString() },
@@ -363,12 +371,26 @@ function render() {
         </button>
 
         <nav class="nav" aria-label="Primary">
-          ${views
+          <div class="desktop-nav">
+            ${views
             .map(
               ([key, label]) =>
                 `<button class="${ui.view === key ? "active" : ""} ${key === "profile" ? "nav-profile" : ""}" data-action="view" data-view="${key}">${label}</button>`,
             )
             .join("")}
+          </div>
+          <div class="mobile-nav">
+            <button class="${ui.view === "dashboard" ? "active" : ""}" data-action="view" data-view="dashboard" aria-label="Home">Home</button>
+            <button class="${ui.view === "analytics" ? "active" : ""}" data-action="view" data-view="analytics" aria-label="Analytics">Analytics</button>
+            <button class="nav-plus ${["habits", "loops"].includes(ui.view) ? "active" : ""}" data-action="toggle-mobile-more" aria-label="Open habits and loops">+</button>
+            <button class="${ui.view === "coach" ? "active" : ""}" data-action="view" data-view="coach" aria-label="Coach">Coach</button>
+            <button class="${ui.view === "profile" ? "active" : ""}" data-action="view" data-view="profile" aria-label="Profile">Profile</button>
+          </div>
+          ${
+            ui.mobileMoreOpen
+              ? `<div class="mobile-more-menu"><button data-action="view" data-view="habits">Habits</button><button data-action="view" data-view="loops">Loops</button></div>`
+              : ""
+          }
         </nav>
       </aside>
       <main class="main">
@@ -382,7 +404,6 @@ function renderCurrentView(user, season) {
   if (ui.view === "habits") return renderHabits(user, season);
   if (ui.view === "loops") return renderLoops(user, season);
   if (ui.view === "analytics") return renderAnalytics(user, season);
-  if (ui.view === "challenges") return renderChallenges(user, season);
   if (ui.view === "profile") return renderProfile(user, season);
   if (ui.view === "coach") return renderCoach(user, season);
   return renderDashboard(user, season);
@@ -431,16 +452,16 @@ function renderDashboard(user, season) {
   return `
     ${pageHeader("Home", seasonSubtitle(season, metrics))}
     <section class="grid four">
-      ${metricCard("Level", `${xp.level}`, `${xp.toNext} XP to level ${xp.level + 1}`)}
-      ${metricCard("Lifetime XP", `${xp.total}`)}
-      ${metricCard("Season XP", `${xp.season}`)}
-      ${metricCard("Weekly Target completed", `${metrics.weeklyScore}%`)}
+      ${metricCard("Season completed", `${seasonProgress(season)}%`, "Progress through the active 84-day season window.", "dashboard-season-completed")}
+      ${metricCard("Lifetime XP", `${xp.total}`, "Total XP earned across all seasons in this account.", "dashboard-lifetime-xp")}
+      ${metricCard("Season XP", `${xp.season}`, "XP earned inside the active 12-week season.", "dashboard-season-xp")}
+      ${metricCard("Weekly target", `${metrics.weeklyScore}%`, "Share of this week's active habit and loop targets completed.", "dashboard-weekly-target")}
     </section>
     <section class="panel xp-panel" style="margin-top: 16px;">
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Progress engine</h3>
-          <p class="panel-note">XP rewards completed habits, weekly targets, loops, and verified challenges.</p>
+          <p class="panel-note">Current level ${xp.level} - ${xp.toNext} XP needed to reach level ${xp.level + 1}.</p>
         </div>
         <span class="chip blue">${longest.weeks} week${longest.weeks === 1 ? "" : "s"} best streak</span>
       </div>
@@ -596,7 +617,10 @@ function renderHabits(user, season) {
                         <p class="row-title">${escapeHtml(habit.title)} ${habitTypeChip(habit.type)}</p>
                         <p class="row-meta">Target ${habit.weeklyTarget}/7 · ${completionCount(habit, season)} completions</p>
                       </div>
-                      <button class="quiet-btn" data-action="restore-habit" data-habit-id="${habit.id}">Restore</button>
+                      <div class="split">
+                        <button class="quiet-btn" data-action="restore-habit" data-habit-id="${habit.id}">Restore</button>
+                        <button class="danger-btn" data-action="delete-habit" data-habit-id="${habit.id}">Delete</button>
+                      </div>
                     </div>
                   `,
                 )
@@ -683,7 +707,9 @@ function habitStatusLine(habit, season, visibleWeek = currentWeekIndex(season)) 
 }
 
 function renderLoops(user, season) {
-  const loops = activeLoops(season);
+  const loops = userLoops().filter((loop) => loop.seasonId === season.id);
+  const active = loops.filter((loop) => !loop.archived);
+  const archived = loops.filter((loop) => loop.archived);
   const habits = activeHabits(season);
   return `
     ${pageHeader("Loops", "Ordered routines that become focused sessions.")}
@@ -724,18 +750,48 @@ function renderLoops(user, season) {
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Saved loops</h3>
-            <p class="panel-note">${loops.length} active routines.</p>
+            <p class="panel-note">${active.length} active routine${active.length === 1 ? "" : "s"}.</p>
           </div>
         </div>
         <div class="loop-list">
           ${
-            loops.length
-              ? loops
+            active.length
+              ? active
                   .map((loop) => renderLoopRow(loop, season, habits))
                   .join("")
               : `<div class="empty">No loops yet.</div>`
           }
         </div>
+      </div>
+    </section>
+    <section class="panel" style="margin-top:16px;">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Archived</h3>
+          <p class="panel-note">Restore old loops or delete the ones you no longer need.</p>
+        </div>
+      </div>
+      <div class="loop-list">
+        ${
+          archived.length
+            ? archived
+                .map(
+                  (loop) => `
+                    <div class="row loop-row">
+                      <div>
+                        <p class="row-title">${escapeHtml(loop.title)} <span class="chip blue">${loop.steps.length} steps</span></p>
+                        <p class="row-meta">${formatDuration(loopDuration(loop))} · ${loop.weeklyTarget}x/week · ${loopCompletionText(loop, season)}</p>
+                      </div>
+                      <div class="split loop-actions">
+                        <button class="quiet-btn" data-action="restore-loop" data-loop-id="${loop.id}">Restore</button>
+                        <button class="danger-btn" data-action="delete-loop" data-loop-id="${loop.id}">Delete</button>
+                      </div>
+                    </div>
+                  `,
+                )
+                .join("")
+            : `<div class="empty">No archived loops.</div>`
+        }
       </div>
     </section>
   `;
@@ -836,6 +892,8 @@ function renderSessionStage() {
 function renderAnalytics(user, season) {
   const habits = activeHabits(season);
   const loops = activeLoops(season);
+  const xp = xpSummary(season);
+  const insight = coachInsight(season);
   const selectedHabit = habits.find((habit) => habit.id === ui.analyticsHabitId) || habits[0];
   const selectedLoop = loops.find((loop) => loop.id === ui.analyticsLoopId) || loops[0];
   if (!ui.analyticsHabitId && selectedHabit) ui.analyticsHabitId = selectedHabit.id;
@@ -850,13 +908,30 @@ function renderAnalytics(user, season) {
       `<button class="quiet-btn" data-action="export-csv">Export CSV</button><button class="quiet-btn" data-action="export-json">Export JSON</button>`,
     )}
     <section class="grid four">
-      ${metricCard("Plan progress", `${seasonProgress(season)}%`, `${metrics.daysLeft} days left`)}
-      ${metricCard("Habit success", `${metrics.averageHabitRate}%`, "Average active habit rate")}
-      ${metricCard("Loop completion", `${metrics.loopCompletionRate}%`, "Completed sessions")}
-      ${metricCard("Best weekly streak", `${bestStreak.weeks}`, bestStreak.habitTitle)}
+      ${metricCard("Plan progress", `${seasonProgress(season)}%`, "Progress through the active 84-day season window.", "analytics-plan-progress")}
+      ${metricCard("Habit success", `${metrics.averageHabitRate}%`, "Average weekly-target success across active habits.", "analytics-habit-success")}
+      ${metricCard("Loop completion", `${metrics.loopCompletionRate}%`, "Completed loop sessions divided by total loop sessions.", "analytics-loop-completion")}
+      ${metricCard("Best weekly streak", `${bestStreak.weeks}`, `Longest weekly-target streak. Current leader: ${bestStreak.habitTitle}.`, "analytics-best-streak")}
+    </section>
+    <section class="insights-grid" style="margin-top:16px;">
+      <div class="panel overview-panel">
+        <div class="panel-head">
+          <div>
+            <h3 class="panel-title">Detailed Analysis</h3>
+            <p class="panel-note">Generated from current season data.</p>
+          </div>
+        </div>
+        <div class="event-list">
+          ${insight.map((line) => `<div class="row"><div><p class="row-title">${escapeHtml(line.title)}</p><p class="row-meta">${escapeHtml(line.body)}</p></div></div>`).join("")}
+        </div>
+      </div>
+      <div class="metric-stack">
+        ${metricCard("Overall performance", `${overallPerformance(season)}%`, `Blended score from season progress, habits, loops, and challenge activity. Band: ${performanceBandLabel(overallPerformance(season))}.`, "analytics-overall-performance", "purple")}
+        ${metricCard("Challenge XP gained", `${xp.challenge}`, "XP earned from completed tracked challenge rewards.", "analytics-challenge-xp")}
+      </div>
     </section>
     <section class="grid two" style="margin-top:16px;">
-      <div class="panel">
+      <div class="panel habit-grid-panel">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Habit grid</h3>
@@ -893,7 +968,7 @@ function renderAnalytics(user, season) {
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Habit performance</h3>
-            <p class="panel-note">Progress against weekly targets.</p>
+            <p class="panel-note">Progress against weekly targets and expected logged days.</p>
           </div>
         </div>
         <div class="bar-list">
@@ -902,12 +977,21 @@ function renderAnalytics(user, season) {
               ? habits
                   .map((habit) => {
                     const rate = habitRate(habit, season);
+                    const overall = habitOverallPerformance(habit, season);
                     const streak = weeklyStreak(habit, season);
                     return `
-                      <div class="bar-row">
-                        <span class="bar-label">${escapeHtml(habit.title)}</span>
-                        <span class="bar-track"><span class="bar-fill" style="width:${rate}%"></span></span>
-                        <span class="bar-value">${rate}% · ${streak}w</span>
+                      <div class="habit-performance-item">
+                        <div class="bar-row">
+                          <span class="bar-label">${escapeHtml(habit.title)}</span>
+                          <span class="bar-subheading">Weekly target</span>
+                          <span class="bar-track"><span class="bar-fill" style="width:${rate}%"></span></span>
+                          <span class="bar-value">${rate}% · ${streak}w</span>
+                        </div>
+                        <div class="bar-row secondary">
+                          <span class="bar-label">Overall</span>
+                          <span class="bar-track"><span class="bar-fill overall" style="width:${overall}%"></span></span>
+                          <span class="bar-value">${overall}%</span>
+                        </div>
                       </div>
                     `;
                   })
@@ -1000,11 +1084,9 @@ function renderChallenges(user, season) {
       "Recovery and bonus quests based on the current season.",
       `<button class="quiet-btn" data-action="view" data-view="coach">Open Coach</button>`,
     )}
-    <section class="grid four">
-      ${metricCard("Level", `${xp.level}`, `${xp.toNext} XP to level ${xp.level + 1}`)}
-      ${metricCard("Lifetime XP", `${xp.total}`)}
-      ${metricCard("Season XP", `${xp.season}`)}
+    <section class="grid two">
       ${metricCard("Performance", `${performance}%`, performanceBandLabel(performance))}
+      ${metricCard("Challenge XP gained", `${xp.challenge}`, "Completed challenge rewards")}
     </section>
     <section class="grid two" style="margin-top:16px;">
       <div class="panel">
@@ -1099,8 +1181,11 @@ function renderChallengeAttempt(attempt) {
 
 function renderProfile(user, season) {
   const seasons = userSeasons();
-  const selectedSeason = seasons.find((item) => item.id === ui.profileSeasonId) || season || seasons[0];
+  const selectedSeason = ui.profileSeasonId ? seasons.find((item) => item.id === ui.profileSeasonId) : null;
   const summary = selectedSeason ? seasonSummary(selectedSeason) : null;
+  const challengeHistory = userChallengeAttempts()
+    .filter((attempt) => ["completed", "dropped", "expired"].includes(attempt.status))
+    .sort((a, b) => parseISO(b.updatedAt || b.completedAt || b.startedAt) - parseISO(a.updatedAt || a.completedAt || a.startedAt));
   const xp = xpSummary(season);
   return `
     ${pageHeader(
@@ -1152,7 +1237,7 @@ function renderProfile(user, season) {
         </form>
       </div>
     </section>
-    <section class="grid two" style="margin-top:16px;">
+    <section class="grid ${summary ? "two" : ""}" style="margin-top:16px;">
       <div class="panel">
         <div class="panel-head">
           <div>
@@ -1169,23 +1254,23 @@ function renderProfile(user, season) {
                   <p class="row-title">${escapeHtml(item.name)} ${item.id === season.id ? `<span class="chip">Active</span>` : `<span class="chip amber">Archived</span>`}</p>
                   <p class="row-meta">${formatDate(item.startDate)} - ${formatDate(item.endDate)}</p>
                 </div>
-                <button class="quiet-btn" data-action="select-profile-season" data-season-id="${item.id}">${selectedSeason?.id === item.id ? "Open" : "View"}</button>
+                <button class="quiet-btn" data-action="select-profile-season" data-season-id="${item.id}">${selectedSeason?.id === item.id ? "Close" : "Open"}</button>
               </div>
             `,
             )
             .join("")}
         </div>
       </div>
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h3 class="panel-title">${summary ? escapeHtml(summary.name) : "Season summary"}</h3>
-            <p class="panel-note">${summary ? `${formatDate(summary.startDate)} - ${formatDate(summary.endDate)}` : "Select a season."}</p>
-          </div>
-        </div>
-        ${
-          summary
-            ? `
+      ${
+        summary
+          ? `
+            <div class="panel">
+              <div class="panel-head">
+                <div>
+                  <h3 class="panel-title">${escapeHtml(summary.name)}</h3>
+                  <p class="panel-note">${formatDate(summary.startDate)} - ${formatDate(summary.endDate)}</p>
+                </div>
+              </div>
               <div class="summary-grid">
                 ${summaryStat("Achievement level", `${summary.achievementLevel}%`)}
                 ${summaryStat("Goals achieved", `${summary.goalsAchieved}/${summary.habitsWorkedOn}`)}
@@ -1195,77 +1280,118 @@ function renderProfile(user, season) {
               <div class="event-list compact-list">
                 ${summary.habits.length ? summary.habits.map((habit) => `<div class="row"><div><p class="row-title">${escapeHtml(habit.title)} ${habitTypeChip(habit.type)}</p><p class="row-meta">${habit.rate}% success · ${habit.streak} week streak · ${habit.completions} logged days</p></div></div>`).join("") : `<div class="empty">No habits were attached to this season.</div>`}
               </div>
-            `
-            : `<div class="empty">No seasons yet.</div>`
-        }
+            </div>
+          `
+          : ""
+      }
+    </section>
+    <section class="panel" style="margin-top:16px;">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Challenge history</h3>
+          <p class="panel-note">${challengeHistory.length} completed, dropped, or expired challenge${challengeHistory.length === 1 ? "" : "s"}.</p>
+        </div>
+      </div>
+      <div class="challenge-list">
+        ${challengeHistory.length ? challengeHistory.map(renderChallengeAttempt).join("") : `<div class="empty">Completed challenges appear here with proof.</div>`}
       </div>
     </section>
     <section class="panel" style="margin-top:16px;">
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Data controls</h3>
-          <p class="panel-note">Reset only refreshes this browser demo data.</p>
+          <p class="panel-note">Reset account deletes all app data for this signed-in account.</p>
         </div>
-        <button class="danger-btn" data-action="reset-demo">Reset demo</button>
+        <div class="split">
+          <button class="quiet-btn" data-action="sign-out">Log out</button>
+          <button class="danger-btn" data-action="reset-demo">Reset account</button>
+        </div>
       </div>
     </section>
   `;
 }
 
 function renderCoach(user, season) {
-  const insight = coachInsight(season);
   const noteOptions = knowledgeTagOptions(season);
   const filterOptions = knowledgeFilterOptions(season);
   const visibleNotes = filteredNotes(season);
   const allNotesCount = userNotes().length;
   const isAllFilter = ui.noteFilter === "all";
   const shownNotes = isAllFilter && !ui.notesExpanded ? visibleNotes.slice(0, 5) : visibleNotes;
+  const suggestions = challengeSuggestions(season);
+  const recovery = suggestions.filter((challenge) => challenge.category === "recovery");
+  const bonus = suggestions.filter((challenge) => challenge.category === "bonus");
+  const activeChallenges = userChallengeAttempts()
+    .filter((attempt) => attempt.seasonId === season.id && attempt.status === "active")
+    .sort((a, b) => parseISO(b.updatedAt || b.startedAt) - parseISO(a.updatedAt || a.startedAt));
   return `
-    ${pageHeader("Coach", "Knowledge notes and local performance guidance.")}
+    ${pageHeader("Coach", "Challenges, notes, and reflection capture.")}
     <section class="grid two">
-      <div class="panel">
+      <div class="panel challenge-panel">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">Knowledge base</h3>
-            <p class="panel-note">Personal rules, frameworks, and reminders.</p>
+            <h3 class="panel-title">Recovery challenges</h3>
+            <p class="panel-note">Unlocked when targets slip or inactive days build up.</p>
           </div>
         </div>
-        <form data-form="add-note" class="grid">
-          <div class="field">
-            <label for="note-title">Title</label>
-            <input id="note-title" name="title" required placeholder="Weekly review rule" />
-          </div>
-          <div class="field">
-            <label for="note-tag">Journal</label>
-            <select id="note-tag" name="tagKey">
-              ${noteOptions
-                .map((option) => `<option value="${escapeAttr(option.key)}">${escapeHtml(option.label)}</option>`)
-                .join("")}
-            </select>
-          </div>
-          <div class="field">
-            <label for="note-body">Note</label>
-            <textarea id="note-body" name="body" required placeholder="Write a principle, reflection, or decision..."></textarea>
-          </div>
-          <button class="primary-btn" type="submit">Save note</button>
-        </form>
+        <div class="challenge-list">
+          ${recovery.length ? recovery.map(renderChallengeSuggestion).join("") : `<div class="empty">No recovery challenges right now.</div>`}
+        </div>
       </div>
-      <div class="panel">
+      <div class="panel challenge-panel">
         <div class="panel-head">
           <div>
-            <h3 class="panel-title">Reflection</h3>
-            <p class="panel-note">Generated from current season data.</p>
+            <h3 class="panel-title">Bonus challenges</h3>
+            <p class="panel-note">Unlocked only when performance rises above the neutral band.</p>
           </div>
         </div>
-        <div class="event-list">
-          ${insight.map((line) => `<div class="row"><div><p class="row-title">${escapeHtml(line.title)}</p><p class="row-meta">${escapeHtml(line.body)}</p></div></div>`).join("")}
+        <div class="challenge-list">
+          ${bonus.length ? bonus.map(renderChallengeSuggestion).join("") : `<div class="empty">No bonus challenges right now.</div>`}
         </div>
       </div>
     </section>
     <section class="panel" style="margin-top:16px;">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Saved notes</h3>
+          <h3 class="panel-title">Active challenges</h3>
+          <p class="panel-note">${activeChallenges.length} tracked objective${activeChallenges.length === 1 ? "" : "s"} in progress.</p>
+        </div>
+      </div>
+      <div class="challenge-list">
+        ${activeChallenges.length ? activeChallenges.map(renderChallengeAttempt).join("") : `<div class="empty">Start a quest when you want an extra push.</div>`}
+      </div>
+    </section>
+    <section class="panel" style="margin-top:16px;">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Knowledge Base</h3>
+          <p class="panel-note">Personal rules, frameworks, and reminders.</p>
+        </div>
+      </div>
+      <form data-form="add-note" class="grid">
+        <div class="field">
+          <label for="note-title">Title</label>
+          <input id="note-title" name="title" required placeholder="Weekly review rule" />
+        </div>
+        <div class="field">
+          <label for="note-tag">Journal</label>
+          <select id="note-tag" name="tagKey">
+            ${noteOptions
+              .map((option) => `<option value="${escapeAttr(option.key)}">${escapeHtml(option.label)}</option>`)
+              .join("")}
+          </select>
+        </div>
+        <div class="field">
+          <label for="note-body">Note</label>
+          <textarea id="note-body" name="body" required placeholder="Write a principle, reflection, or decision..."></textarea>
+        </div>
+        <button class="primary-btn" type="submit">Save note</button>
+      </form>
+    </section>
+    <section class="panel" style="margin-top:16px;">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Reflections</h3>
           <p class="panel-note">${allNotesCount} knowledge item${allNotesCount === 1 ? "" : "s"}.</p>
         </div>
         <div class="note-tools">
@@ -1300,14 +1426,18 @@ function renderCoach(user, season) {
   `;
 }
 
-function metricCard(label, value, foot = "") {
+function metricCard(label, value, detail = "", metricId = slug(label), tone = "") {
+  const flipped = ui.flippedMetricId === metricId;
   return `
-    <div class="panel metric">
-      <div>
-        <span class="metric-label">${label}</span>
-        <div class="metric-value">${value}</div>
+    <div class="panel metric ${tone ? `metric-${tone}` : ""} ${flipped ? "flipped" : ""}" data-action="flip-metric" data-metric-id="${escapeAttr(metricId)}" role="button" tabindex="0">
+      <div class="metric-face metric-front">
+        <span class="metric-label">${escapeHtml(label)}</span>
+        <div class="metric-value">${escapeHtml(value)}</div>
       </div>
-      ${foot ? `<span class="metric-foot">${foot}</span>` : ""}
+      <div class="metric-face metric-back">
+        <span class="metric-label">${escapeHtml(label)}</span>
+        <p class="metric-detail">${escapeHtml(detail || "Measured from current season data.")}</p>
+      </div>
     </div>
   `;
 }
@@ -1417,7 +1547,6 @@ function toggleHabitLog(habitId, date) {
       `${date}T12:00:00.000Z`,
     ),
   );
-  if (habit.logs[date]) awardHabitXp(habit, date);
   evaluateAllActiveChallenges();
   persist();
   render();
@@ -1434,10 +1563,19 @@ function archiveHabit(habitId, archived) {
 }
 
 function deleteHabit(habitId) {
-  const habit = state.habits.find((item) => item.id === habitId);
+  const habit = state.habits.find((item) => item.id === habitId && item.userId === state.activeUserId);
   if (!habit) return;
-  habit.archived = true;
+  if (!habit.archived) {
+    toast("Archive the habit before deleting it.");
+    return;
+  }
+  if (!confirm(`Delete "${habit.title}" permanently? This removes its habit log and cannot be undone.`)) return;
+  state.habits = state.habits.filter((item) => item.id !== habit.id);
+  state.challengeAttempts = (state.challengeAttempts || []).filter((attempt) => attempt.objective?.habitId !== habit.id);
+  state.events.push(event(habit.userId, habit.seasonId, "habit", `Deleted ${habit.title}`, nowIso()));
+  evaluateAllActiveChallenges();
   persist();
+  toast("Habit deleted.");
   render();
 }
 
@@ -1507,12 +1645,31 @@ function readLoopSteps(form, season) {
     .filter(Boolean);
 }
 
-function archiveLoop(loopId) {
+function archiveLoop(loopId, archived = true) {
   const loop = state.loops.find((item) => item.id === loopId);
   if (!loop) return;
-  loop.archived = true;
-  state.events.push(event(loop.userId, loop.seasonId, "loop", `Archived ${loop.title}`, nowIso()));
+  loop.archived = archived;
+  state.events.push(event(loop.userId, loop.seasonId, "loop", `${archived ? "Archived" : "Restored"} ${loop.title}`, nowIso()));
   persist();
+  toast(archived ? "Loop archived." : "Loop restored.");
+  render();
+}
+
+function deleteLoop(loopId) {
+  const loop = state.loops.find((item) => item.id === loopId && item.userId === state.activeUserId);
+  if (!loop) return;
+  if (!loop.archived) {
+    toast("Archive the loop before deleting it.");
+    return;
+  }
+  if (!confirm(`Delete "${loop.title}" permanently? This removes its loop sessions and cannot be undone.`)) return;
+  state.loops = state.loops.filter((item) => item.id !== loop.id);
+  state.sessions = state.sessions.filter((session) => session.loopId !== loop.id);
+  state.challengeAttempts = (state.challengeAttempts || []).filter((attempt) => attempt.objective?.loopId !== loop.id);
+  state.events.push(event(loop.userId, loop.seasonId, "loop", `Deleted ${loop.title}`, nowIso()));
+  evaluateAllActiveChallenges();
+  persist();
+  toast("Loop deleted.");
   render();
 }
 
@@ -1626,7 +1783,6 @@ function completeSession(completed) {
   state.events.push(
     event(state.activeUserId, season.id, "session", `${completed ? "Completed" : "Broke"} ${session.loop.title}`, endedAt.toISOString()),
   );
-  awardLoopXp(savedSession);
   evaluateAllActiveChallenges();
   if (runtime.ticker) clearInterval(runtime.ticker);
   runtime.session = null;
@@ -1767,13 +1923,9 @@ function addKnowledgeNote(data) {
 function knowledgeTagOptions(season) {
   if (!season) return [{ key: "season:", label: "Season" }];
   return [
-    { key: `season:${season.id}`, label: season.name },
-    { key: "challenge:", label: "Challenges" },
+    { key: `season:${season.id}`, label: `Season · ${season.name}` },
     ...activeHabits(season).map((habit) => ({ key: `habit:${habit.id}`, label: `Habit · ${habit.title}` })),
     ...activeLoops(season).map((loop) => ({ key: `loop:${loop.id}`, label: `Loop · ${loop.title}` })),
-    ...userChallengeAttempts()
-      .filter((attempt) => attempt.seasonId === season.id)
-      .map((attempt) => ({ key: `challenge:${attempt.id}`, label: `Challenge · ${attempt.title}` })),
   ];
 }
 
@@ -1818,8 +1970,8 @@ function noteTagKey(note) {
 
 function noteTagLabel(note) {
   if (note.tagType === "challenge") return note.tagLabel && note.tagLabel !== "Challenges" ? `Challenge · ${note.tagLabel}` : "Challenges";
-  if (note.tagLabel) return note.tagType === "season" ? note.tagLabel : `${titleCase(note.tagType || "note")} · ${note.tagLabel}`;
-  if (note.seasonId) return seasonName(note.seasonId);
+  if (note.tagLabel) return note.tagType === "season" ? `Season · ${note.tagLabel}` : `${titleCase(note.tagType || "note")} · ${note.tagLabel}`;
+  if (note.seasonId) return `Season · ${seasonName(note.seasonId)}`;
   return "General";
 }
 
@@ -1873,7 +2025,7 @@ function coachInsight(season) {
     {
       title: challenge ? `Try: ${challenge.title}` : "Challenge system",
       body: challenge
-        ? `${challenge.reason} ${challenge.difficulty} · ${challenge.xp} XP. Open Challenges when you want a structured push.`
+        ? `${challenge.reason} ${challenge.difficulty} · ${challenge.xp} XP. Open Coach when you want a structured push.`
         : "No urgent challenge is needed. Keep collecting evidence through habits, loops, and reflections.",
     },
     {
@@ -2045,7 +2197,8 @@ function downloadBlob(filename, blob) {
 }
 
 function resetDemoData() {
-  if (!confirm("Clear all your Kathēkõ data? This cannot be undone.")) return;
+  if (!confirm("Reset account and delete all Kathēkõ app data for this signed-in account? This cannot be undone.")) return;
+  if (!confirm("Final confirmation: delete all seasons, habits, loops, sessions, notes, XP, and challenge data?")) return;
   state = createEmptyState(currentUser?.id || "_anon");
   ui = normaliseUi({});
   persist();
@@ -2131,7 +2284,7 @@ function setHabitWeek(delta, current = false) {
 }
 
 function selectProfileSeason(seasonId) {
-  ui.profileSeasonId = seasonId || "";
+  ui.profileSeasonId = ui.profileSeasonId === seasonId ? "" : seasonId || "";
   persistUi();
   render();
 }
@@ -2173,46 +2326,130 @@ function xpThreshold(level) {
   return Math.pow(Math.max(1, level) - 1, 2) * 100;
 }
 
-function awardXp({ awardKey, eventType, xpEarned, seasonId, metadata = {}, label = "", at = nowIso(), silent = false }) {
-  if (!state || !state.activeUserId || !awardKey || state.xpAwards?.[awardKey]) return false;
-  state.xpAwards ||= {};
-  state.xpEvents ||= [];
-  const amount = Math.max(0, Number(xpEarned) || 0);
-  if (!amount) return false;
-  const item = {
-    id: uid("xp"),
-    userId: state.activeUserId,
-    seasonId: seasonId || activeSeason()?.id || "",
-    awardKey,
-    eventType,
-    xpEarned: amount,
-    metadata,
-    createdAt: at,
+function recomputeXpAchievements() {
+  if (!state?.activeUserId) return;
+  const currentUserId = state.activeUserId;
+  const events = [];
+  const awards = {};
+  const addComputedXp = ({ awardKey, eventType, xpEarned, seasonId, metadata = {}, createdAt = nowIso() }) => {
+    const amount = Math.max(0, Number(xpEarned) || 0);
+    if (!awardKey || !amount || awards[awardKey]) return;
+    awards[awardKey] = true;
+    events.push({
+      id: awardKey,
+      userId: currentUserId,
+      seasonId: seasonId || "",
+      awardKey,
+      eventType,
+      xpEarned: amount,
+      metadata,
+      createdAt,
+    });
   };
-  state.xpAwards[awardKey] = true;
-  state.xpEvents.push(item);
-  if (label) state.events.push(event(state.activeUserId, item.seasonId, "xp", label, at));
-  syncXpEvent(item);
-  syncProfileXp();
-  if (!silent) toast(`+${amount} XP`);
-  return true;
-}
 
-function syncXpEvent(item) {
-  if (!currentUser || !item) return;
-  _db.from("xp_events")
-    .insert({
-      user_id: currentUser.id,
-      event_type: item.eventType,
-      xp_earned: item.xpEarned,
-      metadata: {
-        ...item.metadata,
-        awardKey: item.awardKey,
-        seasonId: item.seasonId,
-      },
-      created_at: item.createdAt,
-    })
-    .then(({ error }) => { if (error) console.warn("XP event sync failed:", error.message); });
+  userHabits().forEach((habit) => {
+    const season = state.seasons.find((item) => item.id === habit.seasonId);
+    if (!season) return;
+    Object.keys(habit.logs || {})
+      .filter((date) => date >= season.startDate && date <= season.endDate && date <= todayISO())
+      .forEach((date) => {
+        addComputedXp({
+          awardKey: `habit-log:${habit.id}:${date}`,
+          eventType: "habit_log",
+          xpEarned: XP_RULES.habitLog,
+          seasonId: habit.seasonId,
+          metadata: { habitId: habit.id, date, habitTitle: habit.title },
+          createdAt: `${date}T12:00:00.000Z`,
+        });
+      });
+
+    range(currentWeekIndex(season) + 1).forEach((week) => {
+      const weekStart = toISO(addDays(parseISO(season.startDate), week * 7));
+      const count = weekCount(habit, season, week);
+      if (count >= habit.weeklyTarget) {
+        addComputedXp({
+          awardKey: `habit-week:${habit.id}:${week}`,
+          eventType: "habit_week_target",
+          xpEarned: XP_RULES.habitWeek,
+          seasonId: season.id,
+          metadata: { habitId: habit.id, week, habitTitle: habit.title },
+          createdAt: `${weekStart}T12:00:00.000Z`,
+        });
+      }
+      if (count >= 7) {
+        addComputedXp({
+          awardKey: `habit-perfect-week:${habit.id}:${week}`,
+          eventType: "habit_perfect_week",
+          xpEarned: XP_RULES.habitPerfectWeek,
+          seasonId: season.id,
+          metadata: { habitId: habit.id, week, habitTitle: habit.title },
+          createdAt: `${weekStart}T12:00:00.000Z`,
+        });
+      }
+    });
+  });
+
+  userSessions()
+    .filter((session) => session.completed)
+    .forEach((session) => {
+      addComputedXp({
+        awardKey: `loop-session:${session.id}`,
+        eventType: "loop_complete",
+        xpEarned: XP_RULES.loopComplete,
+        seasonId: session.seasonId,
+        metadata: { loopId: session.loopId, loopTitle: session.loopTitle },
+        createdAt: session.endedAt,
+      });
+    });
+
+  userLoops().forEach((loop) => {
+    const season = state.seasons.find((item) => item.id === loop.seasonId);
+    if (!season) return;
+    range(currentWeekIndex(season) + 1).forEach((week) => {
+      if (loopWeekCompletedCount(loop, season, week) >= loop.weeklyTarget) {
+        const weekStart = toISO(addDays(parseISO(season.startDate), week * 7));
+        addComputedXp({
+          awardKey: `loop-week:${loop.id}:${week}`,
+          eventType: "loop_week_target",
+          xpEarned: XP_RULES.loopWeek,
+          seasonId: season.id,
+          metadata: { loopId: loop.id, week, loopTitle: loop.title },
+          createdAt: `${weekStart}T12:00:00.000Z`,
+        });
+      }
+    });
+  });
+
+  userSeasons().forEach((season) => {
+    if (parseISO(season.endDate) <= startOfToday()) {
+      addComputedXp({
+        awardKey: `season-complete:${season.id}`,
+        eventType: "season_complete",
+        xpEarned: XP_RULES.seasonComplete,
+        seasonId: season.id,
+        metadata: { seasonName: season.name },
+        createdAt: `${season.endDate}T12:00:00.000Z`,
+      });
+    }
+  });
+
+  userChallengeAttempts()
+    .filter((attempt) => attempt.status === "completed")
+    .forEach((attempt) => {
+      addComputedXp({
+        awardKey: `challenge-complete:${attempt.id}`,
+        eventType: "challenge_complete",
+        xpEarned: attempt.xp,
+        seasonId: attempt.seasonId,
+        metadata: { challengeId: attempt.challengeId, challengeType: attempt.challengeType, title: attempt.title, evidence: attempt.evidence },
+        createdAt: attempt.completedAt || attempt.updatedAt || nowIso(),
+      });
+    });
+
+  events.sort((a, b) => parseISO(a.createdAt) - parseISO(b.createdAt));
+  state.xpEvents = events;
+  state.xpAwards = awards;
+  syncProfileXp();
 }
 
 function syncProfileXp() {
@@ -2224,100 +2461,8 @@ function syncProfileXp() {
     .then(({ error }) => { if (error) console.warn("XP profile sync failed:", error.message); });
 }
 
-function awardHabitXp(habit, date, silent = false) {
-  const season = state.seasons.find((item) => item.id === habit.seasonId);
-  if (!season || !habit.logs[date]) return;
-  const week = currentWeekIndexForDate(season, date);
-  awardXp({
-    awardKey: `habit-log:${habit.id}:${date}`,
-    eventType: "habit_log",
-    xpEarned: XP_RULES.habitLog,
-    seasonId: habit.seasonId,
-    metadata: { habitId: habit.id, date, habitTitle: habit.title },
-    label: `Earned XP for ${habit.title}`,
-    at: `${date}T12:00:00.000Z`,
-    silent,
-  });
-  awardHabitWeekXp(habit, season, week, silent);
-}
-
-function awardHabitWeekXp(habit, season, week, silent = false) {
-  const count = weekCount(habit, season, week);
-  if (count >= habit.weeklyTarget) {
-    awardXp({
-      awardKey: `habit-week:${habit.id}:${week}`,
-      eventType: "habit_week_target",
-      xpEarned: XP_RULES.habitWeek,
-      seasonId: season.id,
-      metadata: { habitId: habit.id, week, habitTitle: habit.title },
-      label: `Weekly target met: ${habit.title}`,
-      silent,
-    });
-  }
-  if (count >= 7) {
-    awardXp({
-      awardKey: `habit-perfect-week:${habit.id}:${week}`,
-      eventType: "habit_perfect_week",
-      xpEarned: XP_RULES.habitPerfectWeek,
-      seasonId: season.id,
-      metadata: { habitId: habit.id, week, habitTitle: habit.title },
-      label: `Perfect week: ${habit.title}`,
-      silent,
-    });
-  }
-}
-
-function awardLoopXp(session, silent = false) {
-  if (!session.completed) return;
-  awardXp({
-    awardKey: `loop-session:${session.id}`,
-    eventType: "loop_complete",
-    xpEarned: XP_RULES.loopComplete,
-    seasonId: session.seasonId,
-    metadata: { loopId: session.loopId, loopTitle: session.loopTitle },
-    label: `Loop completed: ${session.loopTitle}`,
-    at: session.endedAt,
-    silent,
-  });
-  const loop = state.loops.find((item) => item.id === session.loopId);
-  const season = state.seasons.find((item) => item.id === session.seasonId);
-  if (!loop || !season) return;
-  const week = currentWeekIndexForDate(season, session.endedAt);
-  if (loopWeekCompletedCount(loop, season, week) >= loop.weeklyTarget) {
-    awardXp({
-      awardKey: `loop-week:${loop.id}:${week}`,
-      eventType: "loop_week_target",
-      xpEarned: XP_RULES.loopWeek,
-      seasonId: season.id,
-      metadata: { loopId: loop.id, week, loopTitle: loop.title },
-      label: `Loop weekly target met: ${loop.title}`,
-      silent,
-    });
-  }
-}
-
 function reconcileXpAchievements({ silent = false } = {}) {
-  if (!state) return;
-  userHabits().forEach((habit) => {
-    const season = state.seasons.find((item) => item.id === habit.seasonId);
-    if (!season) return;
-    Object.keys(habit.logs || {}).forEach((date) => awardHabitXp(habit, date, true));
-    range(currentWeekIndex(season) + 1).forEach((week) => awardHabitWeekXp(habit, season, week, true));
-  });
-  userSessions().forEach((session) => awardLoopXp(session, true));
-  userSeasons().forEach((season) => {
-    if (parseISO(season.endDate) <= startOfToday()) {
-      awardXp({
-        awardKey: `season-complete:${season.id}`,
-        eventType: "season_complete",
-        xpEarned: XP_RULES.seasonComplete,
-        seasonId: season.id,
-        metadata: { seasonName: season.name },
-        label: `Season completed: ${season.name}`,
-        silent: true,
-      });
-    }
-  });
+  recomputeXpAchievements();
   if (!silent) toast("XP refreshed.");
 }
 
@@ -2620,15 +2765,6 @@ function completeChallenge(attempt, evidence) {
   attempt.completedAt = at;
   attempt.updatedAt = at;
   attempt.evidence = evidence || "Objective completed from tracked activity.";
-  awardXp({
-    awardKey: `challenge-complete:${attempt.id}`,
-    eventType: "challenge_complete",
-    xpEarned: attempt.xp,
-    seasonId: attempt.seasonId,
-    metadata: { challengeId: attempt.challengeId, challengeType: attempt.challengeType, title: attempt.title, evidence: attempt.evidence },
-    label: `Challenge completed: ${attempt.title}`,
-    at,
-  });
 }
 
 function expireChallenge(attempt, evidence) {
@@ -2884,8 +3020,15 @@ function habitRate(habit, season) {
   return clamp(Math.round((successfulWeeks / eligibleWeeks.length) * 100), 0, 100);
 }
 
+function habitOverallPerformance(habit, season) {
+  const elapsed = elapsedDays(season);
+  if (!elapsed) return 0;
+  const expected = Math.max(1, (elapsed / 7) * habit.weeklyTarget);
+  return clamp(Math.round((completionCount(habit, season) / expected) * 100), 0, 100);
+}
+
 function completionCount(habit, season) {
-  return Object.keys(habit.logs).filter((date) => date >= season.startDate && date <= todayISO()).length;
+  return Object.keys(habit.logs).filter((date) => date >= season.startDate && date <= season.endDate && date <= todayISO()).length;
 }
 
 function habitProgressText(habit, season, week = currentWeekIndex(season)) {
@@ -2984,9 +3127,33 @@ function habitTypeChip(type) {
 }
 
 function setView(view) {
-  ui.view = view;
+  ui.view = view === "challenges" ? "coach" : view;
+  ui.mobileMoreOpen = false;
+  ui.flippedMetricId = "";
+  clearTimeout(runtime.metricTimer);
   persistUi();
   render();
+}
+
+function toggleMobileMore() {
+  ui.mobileMoreOpen = !ui.mobileMoreOpen;
+  persistUi();
+  render();
+}
+
+function flipMetric(metricId) {
+  if (!metricId) return;
+  ui.flippedMetricId = ui.flippedMetricId === metricId ? "" : metricId;
+  persistUi();
+  render();
+  clearTimeout(runtime.metricTimer);
+  if (ui.flippedMetricId) {
+    runtime.metricTimer = setTimeout(() => {
+      ui.flippedMetricId = "";
+      persistUi();
+      render();
+    }, 10_000);
+  }
 }
 
 function toast(message) {
@@ -2999,6 +3166,13 @@ function toast(message) {
 
 function uid(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 9)}_${Date.now().toString(36)}`;
+}
+
+function slug(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }
 
 function range(length) {
