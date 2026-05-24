@@ -991,6 +991,65 @@ textarea:focus-visible {
   line-height: 0.92;
 }
 
+.profile-xp-grid {
+  margin-top: 12px;
+}
+
+.xp-panel {
+  background: var(--blue-soft);
+}
+
+.xp-meter {
+  height: 16px;
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  background: var(--paper-strong);
+  overflow: hidden;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.xp-meter span {
+  display: block;
+  height: 100%;
+  background: var(--green);
+}
+
+.challenge-list {
+  display: grid;
+  gap: 12px;
+}
+
+.challenge-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  padding: 13px;
+  border: 3px solid var(--ink);
+  border-radius: 4px;
+  background: var(--paper-strong);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.challenge-card.needs-reflection {
+  background: var(--amber-soft);
+}
+
+.challenge-title {
+  font-family: var(--display-font);
+  font-size: 1.35rem;
+  line-height: 1;
+  font-weight: 900;
+}
+
+.challenge-reflection {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 3px solid var(--ink);
+}
+
 .compact-list {
   margin-top: 12px;
 }
@@ -1065,7 +1124,7 @@ textarea:focus-visible {
   }
 
   .nav {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 6px;
   }
 
@@ -1077,7 +1136,7 @@ textarea:focus-visible {
     min-height: 52px;
     padding: 0 6px;
     text-align: center;
-    font-size: 0.78rem;
+    font-size: 0.7rem;
     line-height: 1.05;
     box-shadow: 2px 2px 0 var(--ink);
   }
@@ -1130,7 +1189,7 @@ textarea:focus-visible {
   }
 
   .nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .nav button {
@@ -1152,6 +1211,10 @@ textarea:focus-visible {
   }
 
   .row {
+    grid-template-columns: 1fr;
+  }
+
+  .challenge-card {
     grid-template-columns: 1fr;
   }
 

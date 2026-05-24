@@ -7,9 +7,20 @@ const views = [
   ["habits", "Habits"],
   ["loops", "Loops"],
   ["analytics", "Analytics"],
+  ["challenges", "Challenges"],
   ["profile", "Profile"],
   ["coach", "Coach"],
 ];
+
+const XP_RULES = {
+  habitLog: 10,
+  habitWeek: 50,
+  habitPerfectWeek: 25,
+  loopComplete: 20,
+  loopWeek: 40,
+  seasonComplete: 150,
+  reflection: 10,
+};
 
 // ── Supabase client ──────────────────────────────────────────
 const _db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -43,6 +54,7 @@ document.addEventListener("submit", (event) => {
   if (type === "edit-loop") updateLoop(data, form);
   if (type === "add-season") addSeason(data);
   if (type === "add-note") addKnowledgeNote(data);
+  if (type === "challenge-reflection") submitChallengeReflection(data);
 });
 
 document.addEventListener("change", (event) => {
@@ -95,6 +107,10 @@ document.addEventListener("click", (event) => {
   if (action === "habit-week-current") setHabitWeek(0, true);
   if (action === "select-profile-season") selectProfileSeason(button.dataset.seasonId);
   if (action === "select-loop-analytics") selectAnalyticsLoop(button.dataset.loopId);
+  if (action === "start-challenge") startChallenge(button.dataset.challengeId);
+  if (action === "complete-challenge") requestChallengeReflection(button.dataset.challengeAttemptId, "completed");
+  if (action === "drop-challenge") requestChallengeReflection(button.dataset.challengeAttemptId, "dropped");
+  if (action === "reflect-challenge") openChallengeReflection(button.dataset.challengeAttemptId);
 });
 
 // loadState is replaced by loadStateFromSupabase (called inside initApp).
@@ -118,6 +134,7 @@ function normaliseUi(next) {
     profileSeasonId: next.profileSeasonId || "",
     editHabitId: next.editHabitId || "",
     editLoopId: next.editLoopId || "",
+    challengeReflectId: next.challengeReflectId || "",
     noteFilter: next.noteFilter || "all",
     notesExpanded: Boolean(next.notesExpanded),
   };
@@ -141,6 +158,9 @@ function normaliseState(next) {
     sessions: next.sessions || [],
     events: next.events || [],
     knowledgeNotes: next.knowledgeNotes || [],
+    xpEvents: next.xpEvents || [],
+    xpAwards: next.xpAwards || {},
+    challengeAttempts: next.challengeAttempts || [],
   };
 }
 
@@ -255,6 +275,9 @@ function createSeedState() {
       event(userId, seasonId, "habit", "Created Deep work", addDays(parseISO(seasonStart), 0).toISOString()),
       event(userId, seasonId, "loop", "Completed Morning Prime", addDays(new Date(), -7).toISOString()),
     ],
+    xpEvents: [],
+    xpAwards: {},
+    challengeAttempts: [],
     knowledgeNotes: [
       {
         id: uid("note"),
@@ -364,6 +387,7 @@ function renderCurrentView(user, season) {
   if (ui.view === "habits") return renderHabits(user, season);
   if (ui.view === "loops") return renderLoops(user, season);
   if (ui.view === "analytics") return renderAnalytics(user, season);
+  if (ui.view === "challenges") return renderChallenges(user, season);
   if (ui.view === "profile") return renderProfile(user, season);
   if (ui.view === "coach") return renderCoach(user, season);
   return renderDashboard(user, season);
@@ -408,13 +432,24 @@ function renderDashboard(user, season) {
   const loops = activeLoops(season);
   const metrics = seasonMetrics(season);
   const longest = longestSeasonStreak(habits, season);
+  const xp = xpSummary(season);
   return `
     ${pageHeader("Home", seasonSubtitle(season, metrics))}
     <section class="grid four">
-      ${metricCard("Seasons elapsed", `${seasonProgress(season)}%`)}
+      ${metricCard("Level", `${xp.level}`, `${xp.toNext} XP to level ${xp.level + 1}`)}
+      ${metricCard("Lifetime XP", `${xp.total}`)}
+      ${metricCard("Season XP", `${xp.season}`)}
       ${metricCard("Weekly Target completed", `${metrics.weeklyScore}%`)}
-      ${metricCard(`Longest streak: ${escapeHtml(longest.habitTitle)}`, `${longest.weeks} week${longest.weeks === 1 ? "" : "s"}`)}
-      ${metricCard("Loops runs this Season", `${metrics.completedRuns}`)}
+    </section>
+    <section class="panel xp-panel" style="margin-top: 16px;">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Progress engine</h3>
+          <p class="panel-note">XP rewards completed habits, weekly targets, loops, and reflected challenges.</p>
+        </div>
+        <span class="chip blue">${longest.weeks} week${longest.weeks === 1 ? "" : "s"} best streak</span>
+      </div>
+      <div class="xp-meter"><span style="width:${xp.nextProgress}%"></span></div>
     </section>
     <section class="panel" style="margin-top: 16px;">
       <div class="panel-head">
@@ -953,10 +988,163 @@ function renderAnalytics(user, season) {
   `;
 }
 
+function renderChallenges(user, season) {
+  const xp = xpSummary(season);
+  const suggestions = challengeSuggestions(season);
+  const recovery = suggestions.filter((challenge) => challenge.category === "recovery");
+  const bonus = suggestions.filter((challenge) => challenge.category === "bonus");
+  const attempts = userChallengeAttempts()
+    .filter((attempt) => attempt.seasonId === season.id)
+    .sort((a, b) => parseISO(b.updatedAt || b.startedAt) - parseISO(a.updatedAt || a.startedAt));
+  const active = attempts.filter((attempt) => attempt.status === "active" || attempt.status === "reflection");
+  const completed = attempts.filter((attempt) => attempt.status === "completed" || attempt.status === "dropped");
+  return `
+    ${pageHeader(
+      "Challenges",
+      "Recovery and bonus quests based on the current season.",
+      `<button class="quiet-btn" data-action="view" data-view="coach">Open Coach</button>`,
+    )}
+    <section class="grid four">
+      ${metricCard("Level", `${xp.level}`, `${xp.toNext} XP to level ${xp.level + 1}`)}
+      ${metricCard("Lifetime XP", `${xp.total}`)}
+      ${metricCard("Season XP", `${xp.season}`)}
+      ${metricCard("Challenge XP", `${xp.challenge}`, "From completed quests and reflections")}
+    </section>
+    <section class="grid two" style="margin-top:16px;">
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h3 class="panel-title">Recovery</h3>
+            <p class="panel-note">Unlocked when targets slip or inactive days build up.</p>
+          </div>
+        </div>
+        <div class="challenge-list">
+          ${recovery.length ? recovery.map(renderChallengeSuggestion).join("") : `<div class="empty">No recovery quests are needed right now.</div>`}
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h3 class="panel-title">Bonus</h3>
+            <p class="panel-note">More options unlock as the week gets stronger.</p>
+          </div>
+        </div>
+        <div class="challenge-list">
+          ${bonus.length ? bonus.map(renderChallengeSuggestion).join("") : `<div class="empty">Lift the current week above 60% to unlock bonus quests.</div>`}
+        </div>
+      </div>
+    </section>
+    <section class="panel" style="margin-top:16px;">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Active challenges</h3>
+          <p class="panel-note">${active.length} in progress or awaiting reflection.</p>
+        </div>
+      </div>
+      <div class="challenge-list">
+        ${active.length ? active.map(renderChallengeAttempt).join("") : `<div class="empty">Start a quest when you want an extra push.</div>`}
+      </div>
+    </section>
+    <section class="panel" style="margin-top:16px;">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Completed</h3>
+          <p class="panel-note">${completed.length} reflected challenge${completed.length === 1 ? "" : "s"}.</p>
+        </div>
+      </div>
+      <div class="challenge-list">
+        ${completed.length ? completed.map(renderChallengeAttempt).join("") : `<div class="empty">Completed and dropped challenges appear here after reflection.</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderChallengeSuggestion(challenge) {
+  return `
+    <div class="challenge-card">
+      <div>
+        <p class="row-title">
+          <span class="challenge-title">${escapeHtml(challenge.title)}</span>
+          <span class="chip ${challenge.category === "recovery" ? "coral" : "blue"}">${titleCase(challenge.category)}</span>
+          <span class="chip amber">${escapeHtml(challenge.difficulty)}</span>
+        </p>
+        <p class="row-meta">${escapeHtml(challenge.description)}</p>
+        <p class="row-meta">${escapeHtml(challenge.method)} · ${challenge.xp} XP</p>
+      </div>
+      <button class="primary-btn" data-action="start-challenge" data-challenge-id="${escapeAttr(challenge.id)}">Start</button>
+    </div>
+  `;
+}
+
+function renderChallengeAttempt(attempt) {
+  const needsReflection = attempt.status === "reflection";
+  const statusLabel = needsReflection ? `Reflect ${attempt.outcome === "completed" ? "completion" : "drop"}` : titleCase(attempt.status);
+  return `
+    <div class="challenge-card ${needsReflection ? "needs-reflection" : ""}">
+      <div>
+        <p class="row-title">
+          <span class="challenge-title">${escapeHtml(attempt.title)}</span>
+          <span class="chip ${attempt.category === "recovery" ? "coral" : "blue"}">${escapeHtml(statusLabel)}</span>
+          <span class="chip amber">${attempt.xp} XP</span>
+        </p>
+        <p class="row-meta">${escapeHtml(attempt.description)}</p>
+        <p class="row-meta">${escapeHtml(attempt.method)} · ${escapeHtml(attempt.difficulty)}</p>
+      </div>
+      ${
+        attempt.status === "active"
+          ? `<div class="split"><button class="primary-btn" data-action="complete-challenge" data-challenge-attempt-id="${attempt.id}">Complete</button><button class="quiet-btn" data-action="drop-challenge" data-challenge-attempt-id="${attempt.id}">Drop</button></div>`
+          : needsReflection
+            ? `<button class="primary-btn" data-action="reflect-challenge" data-challenge-attempt-id="${attempt.id}">Reflect</button>`
+            : `<span class="chip neutral">${formatDateTime(attempt.completedAt || attempt.droppedAt || attempt.updatedAt)}</span>`
+      }
+      ${needsReflection && ui.challengeReflectId === attempt.id ? renderChallengeReflectionForm(attempt) : ""}
+    </div>
+  `;
+}
+
+function renderChallengeReflectionForm(attempt) {
+  return `
+    <form class="challenge-reflection" data-form="challenge-reflection">
+      <input type="hidden" name="attemptId" value="${escapeAttr(attempt.id)}" />
+      <div class="field">
+        <label for="challenge-worked-${attempt.id}">What worked?</label>
+        <textarea id="challenge-worked-${attempt.id}" name="worked" required placeholder="What helped, even slightly?"></textarea>
+      </div>
+      <div class="field">
+        <label for="challenge-blocked-${attempt.id}">What got in the way?</label>
+        <textarea id="challenge-blocked-${attempt.id}" name="blocked" required placeholder="Friction, timing, energy, environment, or method mismatch."></textarea>
+      </div>
+      <div class="form-grid compact">
+        <div class="field">
+          <label for="challenge-again-${attempt.id}">Try similar again?</label>
+          <select id="challenge-again-${attempt.id}" name="again">
+            <option value="yes">Yes</option>
+            <option value="maybe">Maybe</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="challenge-difficulty-${attempt.id}">Difficulty felt</label>
+          <select id="challenge-difficulty-${attempt.id}" name="difficultyFelt">
+            <option value="right">Right</option>
+            <option value="too easy">Too easy</option>
+            <option value="too hard">Too hard</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <button class="primary-btn" type="submit">Save reflection</button>
+        </div>
+      </div>
+    </form>
+  `;
+}
+
 function renderProfile(user, season) {
   const seasons = userSeasons();
   const selectedSeason = seasons.find((item) => item.id === ui.profileSeasonId) || season || seasons[0];
   const summary = selectedSeason ? seasonSummary(selectedSeason) : null;
+  const xp = xpSummary(season);
   return `
     ${pageHeader(
       "Profile",
@@ -977,6 +1165,13 @@ function renderProfile(user, season) {
             <p class="row-meta">${escapeHtml(user.email || "Local demo account")}</p>
           </div>
         </div>
+        <div class="summary-grid profile-xp-grid">
+          ${summaryStat("Level", `${xp.level}`)}
+          ${summaryStat("Lifetime XP", `${xp.total}`)}
+          ${summaryStat("Season XP", `${xp.season}`)}
+          ${summaryStat("Next level", `${xp.toNext} XP`)}
+        </div>
+        <div class="xp-meter"><span style="width:${xp.nextProgress}%"></span></div>
       </div>
       <div class="panel">
         <div class="panel-head">
@@ -1264,6 +1459,7 @@ function toggleHabitLog(habitId, date) {
       `${date}T12:00:00.000Z`,
     ),
   );
+  if (habit.logs[date]) awardHabitXp(habit, date);
   persist();
   render();
 }
@@ -1454,7 +1650,7 @@ function completeSession(completed) {
   const season = activeSeason();
   const endedAt = new Date();
   const durationSeconds = Math.max(1, Math.round((endedAt - session.startedAt) / 1000));
-  state.sessions.push({
+  const savedSession = {
     id: uid("session"),
     userId: state.activeUserId,
     seasonId: season.id,
@@ -1465,10 +1661,12 @@ function completeSession(completed) {
     durationSeconds,
     completed,
     steps: session.runSteps,
-  });
+  };
+  state.sessions.push(savedSession);
   state.events.push(
     event(state.activeUserId, season.id, "session", `${completed ? "Completed" : "Broke"} ${session.loop.title}`, endedAt.toISOString()),
   );
+  awardLoopXp(savedSession);
   if (runtime.ticker) clearInterval(runtime.ticker);
   runtime.session = null;
   runtime.ticker = null;
@@ -1608,8 +1806,12 @@ function knowledgeTagOptions(season) {
   if (!season) return [{ key: "season:", label: "Season" }];
   return [
     { key: `season:${season.id}`, label: season.name },
+    { key: "challenge:", label: "Challenges" },
     ...activeHabits(season).map((habit) => ({ key: `habit:${habit.id}`, label: `Habit · ${habit.title}` })),
     ...activeLoops(season).map((loop) => ({ key: `loop:${loop.id}`, label: `Loop · ${loop.title}` })),
+    ...userChallengeAttempts()
+      .filter((attempt) => attempt.seasonId === season.id)
+      .map((attempt) => ({ key: `challenge:${attempt.id}`, label: `Challenge · ${attempt.title}` })),
   ];
 }
 
@@ -1627,6 +1829,15 @@ function resolveKnowledgeTag(tagKey, season) {
     const loop = userLoops().find((item) => item.id === id);
     if (loop) return { type: "loop", id: loop.id, label: loop.title, seasonId: loop.seasonId };
   }
+  if (type === "challenge") {
+    const attempt = userChallengeAttempts().find((item) => item.id === id);
+    return {
+      type: "challenge",
+      id: attempt?.id || "",
+      label: attempt?.title || "Challenges",
+      seasonId: attempt?.seasonId || season?.id || "",
+    };
+  }
   const selectedSeason = userSeasons().find((item) => item.id === id) || season || userSeasons()[0];
   return {
     type: "season",
@@ -1638,11 +1849,13 @@ function resolveKnowledgeTag(tagKey, season) {
 
 function noteTagKey(note) {
   if (note.tagType && note.tagId) return `${note.tagType}:${note.tagId}`;
+  if (note.tagType === "challenge") return "challenge:";
   if (note.seasonId) return `season:${note.seasonId}`;
   return "season:";
 }
 
 function noteTagLabel(note) {
+  if (note.tagType === "challenge") return note.tagLabel && note.tagLabel !== "Challenges" ? `Challenge · ${note.tagLabel}` : "Challenges";
   if (note.tagLabel) return note.tagType === "season" ? note.tagLabel : `${titleCase(note.tagType || "note")} · ${note.tagLabel}`;
   if (note.seasonId) return seasonName(note.seasonId);
   return "General";
@@ -1654,6 +1867,7 @@ function filteredNotes(season) {
   const filter = available.has(ui.noteFilter) ? ui.noteFilter : "all";
   if (filter !== ui.noteFilter) ui.noteFilter = filter;
   if (filter === "all") return notes;
+  if (filter === "challenge:") return notes.filter((note) => note.tagType === "challenge");
   return notes.filter((note) => noteTagKey(note) === filter);
 }
 
@@ -1674,6 +1888,7 @@ function coachInsight(season) {
   const loops = activeLoops(season);
   const sessions = userSessions().filter((session) => session.seasonId === season.id);
   const notes = userNotes();
+  const challenge = challengeSuggestions(season)[0];
   return [
     {
       title: weakest ? `Tighten ${weakest.habit.title}` : "Create a first target",
@@ -1692,6 +1907,12 @@ function coachInsight(season) {
       body: loops.length
         ? `${sessions.filter((session) => session.completed).length} completed session${sessions.filter((session) => session.completed).length === 1 ? "" : "s"} recorded this season. Keep loops short enough to start without negotiation.`
         : "Loops turn intention into execution. Start with three steps and a total duration under 30 minutes.",
+    },
+    {
+      title: challenge ? `Try: ${challenge.title}` : "Challenge system",
+      body: challenge
+        ? `${challenge.method} · ${challenge.difficulty} · ${challenge.xp} XP. Open Challenges when you want a structured push.`
+        : "No urgent challenge is needed. Keep collecting evidence through habits, loops, and reflections.",
     },
     {
       title: notes.length ? "Knowledge cue" : "Add a principle",
@@ -1737,6 +1958,26 @@ function exportCsv() {
       session.durationSeconds,
       `${session.steps.length} steps`,
     ]),
+    ...userChallengeAttempts().map((attempt) => [
+      "challenge",
+      activeUser().name,
+      seasonName(attempt.seasonId),
+      attempt.completedAt || attempt.droppedAt || attempt.startedAt,
+      attempt.title,
+      attempt.status,
+      attempt.xp,
+      `${attempt.category}; ${attempt.method}`,
+    ]),
+    ...userXpEvents().map((item) => [
+      "xp",
+      activeUser().name,
+      seasonName(item.seasonId),
+      item.createdAt,
+      item.eventType,
+      "earned",
+      item.xpEarned,
+      item.awardKey,
+    ]),
     ...userEvents().map((item) => [
       "event",
       activeUser().name,
@@ -1761,6 +2002,8 @@ function exportJson() {
     sessions: userSessions(),
     events: userEvents(),
     knowledgeNotes: userNotes(),
+    xpEvents: userXpEvents(),
+    challengeAttempts: userChallengeAttempts(),
   };
   download(`katheko-export-${todayISO()}.json`, JSON.stringify(payload, null, 2), "application/json");
 }
@@ -1794,6 +2037,10 @@ function knowledgeNotePath(note, index) {
   if (note.tagType === "loop") {
     const loop = state.loops.find((item) => item.id === note.tagId);
     return `${seasonFolder}/Loops/${safePathPart(loop?.title || note.tagLabel || "Loop")}/${noteName}`;
+  }
+  if (note.tagType === "challenge") {
+    const attempt = state.challengeAttempts.find((item) => item.id === note.tagId);
+    return `${seasonFolder}/Challenges/${safePathPart(attempt?.title || note.tagLabel || note.title || "Challenge")}/${noteName}`;
   }
   return `${seasonFolder}/Season Notes/${noteName}`;
 }
@@ -1891,6 +2138,14 @@ function userNotes() {
   return state.knowledgeNotes.filter((note) => note.userId === state.activeUserId);
 }
 
+function userXpEvents() {
+  return (state.xpEvents || []).filter((item) => item.userId === state.activeUserId);
+}
+
+function userChallengeAttempts() {
+  return (state.challengeAttempts || []).filter((item) => item.userId === state.activeUserId);
+}
+
 function setEditHabit(habitId) {
   ui.editHabitId = habitId || "";
   ui.editLoopId = "";
@@ -1923,6 +2178,536 @@ function selectAnalyticsLoop(loopId) {
   ui.analyticsLoopId = loopId || "";
   persistUi();
   render();
+}
+
+function xpSummary(season = activeSeason()) {
+  const events = userXpEvents();
+  const total = events.reduce((sum, item) => sum + Math.max(0, Number(item.xpEarned) || 0), 0);
+  const level = xpLevel(total);
+  const currentLevelXp = xpThreshold(level);
+  const nextLevelXp = xpThreshold(level + 1);
+  const span = Math.max(1, nextLevelXp - currentLevelXp);
+  const seasonXp = season ? events
+    .filter((item) => item.seasonId === season.id)
+    .reduce((sum, item) => sum + Math.max(0, Number(item.xpEarned) || 0), 0) : 0;
+  const challengeXp = season ? events
+    .filter((item) => item.seasonId === season.id && String(item.eventType || "").startsWith("challenge"))
+    .reduce((sum, item) => sum + Math.max(0, Number(item.xpEarned) || 0), 0) : 0;
+  return {
+    total,
+    season: seasonXp,
+    challenge: challengeXp,
+    level,
+    toNext: Math.max(0, nextLevelXp - total),
+    nextProgress: clamp(Math.round(((total - currentLevelXp) / span) * 100), 0, 100),
+  };
+}
+
+function xpLevel(totalXp) {
+  return Math.floor(Math.sqrt(Math.max(0, totalXp) / 100)) + 1;
+}
+
+function xpThreshold(level) {
+  return Math.pow(Math.max(1, level) - 1, 2) * 100;
+}
+
+function awardXp({ awardKey, eventType, xpEarned, seasonId, metadata = {}, label = "", at = nowIso(), silent = false }) {
+  if (!state || !state.activeUserId || !awardKey || state.xpAwards?.[awardKey]) return false;
+  state.xpAwards ||= {};
+  state.xpEvents ||= [];
+  const amount = Math.max(0, Number(xpEarned) || 0);
+  if (!amount) return false;
+  const item = {
+    id: uid("xp"),
+    userId: state.activeUserId,
+    seasonId: seasonId || activeSeason()?.id || "",
+    awardKey,
+    eventType,
+    xpEarned: amount,
+    metadata,
+    createdAt: at,
+  };
+  state.xpAwards[awardKey] = true;
+  state.xpEvents.push(item);
+  if (label) state.events.push(event(state.activeUserId, item.seasonId, "xp", label, at));
+  syncXpEvent(item);
+  syncProfileXp();
+  if (!silent) toast(`+${amount} XP`);
+  return true;
+}
+
+function syncXpEvent(item) {
+  if (!currentUser || !item) return;
+  _db.from("xp_events")
+    .insert({
+      user_id: currentUser.id,
+      event_type: item.eventType,
+      xp_earned: item.xpEarned,
+      metadata: {
+        ...item.metadata,
+        awardKey: item.awardKey,
+        seasonId: item.seasonId,
+      },
+      created_at: item.createdAt,
+    })
+    .then(({ error }) => { if (error) console.warn("XP event sync failed:", error.message); });
+}
+
+function syncProfileXp() {
+  if (!currentUser || !state) return;
+  const total = xpSummary().total;
+  _db.from("profiles")
+    .update({ xp: total, level: xpLevel(total) })
+    .eq("id", currentUser.id)
+    .then(({ error }) => { if (error) console.warn("XP profile sync failed:", error.message); });
+}
+
+function awardHabitXp(habit, date, silent = false) {
+  const season = state.seasons.find((item) => item.id === habit.seasonId);
+  if (!season || !habit.logs[date]) return;
+  const week = currentWeekIndexForDate(season, date);
+  awardXp({
+    awardKey: `habit-log:${habit.id}:${date}`,
+    eventType: "habit_log",
+    xpEarned: XP_RULES.habitLog,
+    seasonId: habit.seasonId,
+    metadata: { habitId: habit.id, date, habitTitle: habit.title },
+    label: `Earned XP for ${habit.title}`,
+    at: `${date}T12:00:00.000Z`,
+    silent,
+  });
+  awardHabitWeekXp(habit, season, week, silent);
+}
+
+function awardHabitWeekXp(habit, season, week, silent = false) {
+  const count = weekCount(habit, season, week);
+  if (count >= habit.weeklyTarget) {
+    awardXp({
+      awardKey: `habit-week:${habit.id}:${week}`,
+      eventType: "habit_week_target",
+      xpEarned: XP_RULES.habitWeek,
+      seasonId: season.id,
+      metadata: { habitId: habit.id, week, habitTitle: habit.title },
+      label: `Weekly target met: ${habit.title}`,
+      silent,
+    });
+  }
+  if (count >= 7) {
+    awardXp({
+      awardKey: `habit-perfect-week:${habit.id}:${week}`,
+      eventType: "habit_perfect_week",
+      xpEarned: XP_RULES.habitPerfectWeek,
+      seasonId: season.id,
+      metadata: { habitId: habit.id, week, habitTitle: habit.title },
+      label: `Perfect week: ${habit.title}`,
+      silent,
+    });
+  }
+}
+
+function awardLoopXp(session, silent = false) {
+  if (!session.completed) return;
+  awardXp({
+    awardKey: `loop-session:${session.id}`,
+    eventType: "loop_complete",
+    xpEarned: XP_RULES.loopComplete,
+    seasonId: session.seasonId,
+    metadata: { loopId: session.loopId, loopTitle: session.loopTitle },
+    label: `Loop completed: ${session.loopTitle}`,
+    at: session.endedAt,
+    silent,
+  });
+  const loop = state.loops.find((item) => item.id === session.loopId);
+  const season = state.seasons.find((item) => item.id === session.seasonId);
+  if (!loop || !season) return;
+  const week = currentWeekIndexForDate(season, session.endedAt);
+  if (loopWeekCompletedCount(loop, season, week) >= loop.weeklyTarget) {
+    awardXp({
+      awardKey: `loop-week:${loop.id}:${week}`,
+      eventType: "loop_week_target",
+      xpEarned: XP_RULES.loopWeek,
+      seasonId: season.id,
+      metadata: { loopId: loop.id, week, loopTitle: loop.title },
+      label: `Loop weekly target met: ${loop.title}`,
+      silent,
+    });
+  }
+}
+
+function reconcileXpAchievements({ silent = false } = {}) {
+  if (!state) return;
+  userHabits().forEach((habit) => {
+    const season = state.seasons.find((item) => item.id === habit.seasonId);
+    if (!season) return;
+    Object.keys(habit.logs || {}).forEach((date) => awardHabitXp(habit, date, true));
+    range(currentWeekIndex(season) + 1).forEach((week) => awardHabitWeekXp(habit, season, week, true));
+  });
+  userSessions().forEach((session) => awardLoopXp(session, true));
+  userSeasons().forEach((season) => {
+    if (parseISO(season.endDate) <= startOfToday()) {
+      awardXp({
+        awardKey: `season-complete:${season.id}`,
+        eventType: "season_complete",
+        xpEarned: XP_RULES.seasonComplete,
+        seasonId: season.id,
+        metadata: { seasonName: season.name },
+        label: `Season completed: ${season.name}`,
+        silent: true,
+      });
+    }
+  });
+  if (!silent) toast("XP refreshed.");
+}
+
+function currentWeekIndexForDate(season, date) {
+  const start = parseISO(season.startDate);
+  const day = parseISO(date);
+  return clamp(Math.floor((day - start) / DAY_MS / 7), 0, 11);
+}
+
+function loopWeekCompletedCount(loop, season, week) {
+  const weekStart = addDays(parseISO(season.startDate), week * 7);
+  const weekEnd = addDays(weekStart, 6);
+  return loopSessions(loop, season).filter((session) => {
+    const ended = parseISO(session.endedAt || session.startedAt);
+    return session.completed && ended >= weekStart && ended <= addDays(weekEnd, 1);
+  }).length;
+}
+
+function challengeSuggestions(season) {
+  const activeIds = new Set(userChallengeAttempts().filter((attempt) => attempt.status !== "dropped").map((attempt) => attempt.challengeId));
+  return [...recoveryChallenges(season), ...bonusChallenges(season)]
+    .filter((challenge) => !activeIds.has(challenge.id))
+    .slice(0, 12);
+}
+
+function recoveryChallenges(season) {
+  const current = currentWeekIndex(season);
+  const habits = activeHabits(season);
+  const loops = activeLoops(season);
+  const suggestions = [];
+  habits.forEach((habit) => {
+    const week = Math.max(0, current - (weekCount(habit, season, current) >= habit.weeklyTarget ? 0 : 1));
+    const count = weekCount(habit, season, week);
+    const missed = Math.max(0, habit.weeklyTarget - count);
+    if (!missed) return;
+    const band = challengeBand(missed >= 3 ? "deep" : missed >= 2 ? "standard" : "light", "recovery");
+    suggestions.push({
+      id: `recovery-habit:${habit.id}:${week}`,
+      category: "recovery",
+      title: `Recover ${habit.title}`,
+      description: missed >= 3
+        ? `Complete a full reset: clear one blocker, schedule the next attempt, and do a focused 30-minute recovery block for this habit.`
+        : `Use one implementation intention: decide exactly when and where the next ${habit.title} attempt happens.`,
+      method: missed >= 3 ? "Friction removal + implementation intention" : "Implementation intention",
+      difficulty: band.difficulty,
+      xp: band.xp,
+      linkedType: "habit",
+      linkedId: habit.id,
+    });
+  });
+  const inactiveDays = inactiveDayCount(season);
+  if (inactiveDays >= 2) {
+    const band = challengeBand(inactiveDays >= 5 ? "deep" : inactiveDays >= 3 ? "standard" : "light", "recovery");
+    suggestions.push({
+      id: `recovery-inactive:${season.id}:${inactiveDays}`,
+      category: "recovery",
+      title: "Re-entry day",
+      description: "Log one small action, then write why the break happened and what the next low-friction step is.",
+      method: "Restart ritual",
+      difficulty: band.difficulty,
+      xp: band.xp,
+      linkedType: "season",
+      linkedId: season.id,
+    });
+  }
+  loops.forEach((loop) => {
+    const stats = loopStats(loop, season);
+    if (!stats.broken) return;
+    const band = challengeBand(stats.broken >= 3 ? "standard" : "light", "recovery");
+    suggestions.push({
+      id: `recovery-loop:${loop.id}:${current}`,
+      category: "recovery",
+      title: `Restart ${loop.title}`,
+      description: "Run the loop once with permission to shorten one step. The win is restarting the chain.",
+      method: "Minimum viable loop",
+      difficulty: band.difficulty,
+      xp: band.xp,
+      linkedType: "loop",
+      linkedId: loop.id,
+    });
+  });
+  return suggestions.slice(0, 5);
+}
+
+function bonusChallenges(season) {
+  const metrics = seasonMetrics(season);
+  const habits = activeHabits(season);
+  const loops = activeLoops(season);
+  const notes = userNotes().filter((note) => note.seasonId === season.id);
+  const suggestions = [];
+  const strongest = habits
+    .map((habit) => ({ habit, rate: habitRate(habit, season), streak: weeklyStreak(habit, season) }))
+    .sort((a, b) => b.rate - a.rate || b.streak - a.streak)[0];
+  const failedTechnique = failedChallengeReflection();
+  if (failedTechnique) {
+    suggestions.push({
+      id: `bonus-alternative-method:${failedTechnique.id}:${currentWeekIndex(season)}`,
+      category: "bonus",
+      title: "Try a different method",
+      description: `The last ${failedTechnique.method} attempt did not fit. Test a lower-friction approach and compare how it feels.`,
+      method: "Method substitution",
+      difficulty: "Light",
+      xp: 25,
+      linkedType: "season",
+      linkedId: season.id,
+    });
+  }
+  const successfulTechnique = successfulChallengeReflection();
+  if (successfulTechnique && metrics.weeklyScore >= 60) {
+    suggestions.push({
+      id: `bonus-repeat-method:${successfulTechnique.method}:${currentWeekIndex(season)}`,
+      category: "bonus",
+      title: `Scale ${successfulTechnique.method}`,
+      description: "Repeat a method that previously worked, but increase difficulty by one small notch.",
+      method: successfulTechnique.method,
+      difficulty: "Standard",
+      xp: 50,
+      linkedType: "season",
+      linkedId: season.id,
+    });
+  }
+  if (metrics.weeklyScore >= 60 && strongest) {
+    suggestions.push({
+      id: `bonus-identity:${strongest.habit.id}:${currentWeekIndex(season)}`,
+      category: "bonus",
+      title: `Identity proof: ${strongest.habit.title}`,
+      description: "Write one sentence that starts with 'I am the kind of person who...' and immediately log one proof action.",
+      method: "Identity rehearsal",
+      difficulty: "Light",
+      xp: 25,
+      linkedType: "habit",
+      linkedId: strongest.habit.id,
+    });
+  }
+  if (metrics.weeklyScore >= 80 && loops.length) {
+    const loop = loops[0];
+    suggestions.push({
+      id: `bonus-loop-design:${loop.id}:${currentWeekIndex(season)}`,
+      category: "bonus",
+      title: `Upgrade ${loop.title}`,
+      description: "Improve one step in the loop by reducing friction, preparing materials, or making the next action obvious.",
+      method: "Environment design",
+      difficulty: "Standard",
+      xp: 50,
+      linkedType: "loop",
+      linkedId: loop.id,
+    });
+  }
+  if (metrics.weeklyScore >= 80) {
+    suggestions.push({
+      id: `bonus-temptation:${season.id}:${currentWeekIndex(season)}`,
+      category: "bonus",
+      title: "Temptation bundle",
+      description: "Pair a useful action with something enjoyable, then test whether the pairing makes starting easier.",
+      method: "Temptation bundling",
+      difficulty: "Standard",
+      xp: 50,
+      linkedType: "season",
+      linkedId: season.id,
+    });
+  }
+  if (metrics.weeklyScore >= 100) {
+    suggestions.push({
+      id: `bonus-deep-review:${season.id}:${currentWeekIndex(season)}`,
+      category: "bonus",
+      title: "Deep weekly review",
+      description: "Review the week, name the strongest method, name the weakest friction point, and choose one next experiment.",
+      method: "Reflection prompt",
+      difficulty: "Deep",
+      xp: 100,
+      linkedType: "season",
+      linkedId: season.id,
+    });
+    suggestions.push({
+      id: `bonus-habit-stack:${season.id}:${currentWeekIndex(season)}`,
+      category: "bonus",
+      title: "Habit stack extension",
+      description: "Attach one new two-minute behaviour after an existing reliable habit and test it today.",
+      method: "Habit stacking",
+      difficulty: "Light",
+      xp: 25,
+      linkedType: "season",
+      linkedId: season.id,
+    });
+  }
+  if (notes.length && metrics.weeklyScore >= 60) {
+    suggestions.push({
+      id: `bonus-note-review:${season.id}:${notes.length}`,
+      category: "bonus",
+      title: "Turn a note into action",
+      description: "Pick one saved note and convert it into a concrete next action before the day ends.",
+      method: "Reflection to action",
+      difficulty: "Light",
+      xp: 25,
+      linkedType: "season",
+      linkedId: season.id,
+    });
+  }
+  const baseLimit = metrics.weeklyScore >= 100 ? 6 : metrics.weeklyScore >= 80 ? 4 : metrics.weeklyScore >= 60 ? 2 : 0;
+  const limit = failedTechnique ? Math.max(1, baseLimit) : baseLimit;
+  return suggestions.slice(0, limit);
+}
+
+function challengeBand(size, category) {
+  if (size === "deep") return { difficulty: "Deep", xp: category === "recovery" ? 150 : 100 };
+  if (size === "standard") return { difficulty: "Standard", xp: category === "recovery" ? 75 : 50 };
+  return { difficulty: "Light", xp: category === "recovery" ? 30 : 25 };
+}
+
+function inactiveDayCount(season) {
+  let count = 0;
+  for (let offset = 0; offset < Math.min(elapsedDays(season), 14); offset += 1) {
+    const date = toISO(addDays(startOfToday(), -offset));
+    const hasHabit = activeHabits(season).some((habit) => habit.logs[date]);
+    const hasLoop = userSessions().some((session) => session.seasonId === season.id && toISO(parseISO(session.startedAt)) === date);
+    if (hasHabit || hasLoop) break;
+    count += 1;
+  }
+  return count;
+}
+
+function successfulChallengeReflection() {
+  return userChallengeAttempts()
+    .filter((attempt) => attempt.status === "completed" && attempt.reflection?.again === "yes")
+    .sort((a, b) => parseISO(b.completedAt || b.updatedAt) - parseISO(a.completedAt || a.updatedAt))[0];
+}
+
+function failedChallengeReflection() {
+  return userChallengeAttempts()
+    .filter((attempt) => attempt.reflection && (attempt.status === "dropped" || attempt.reflection.again === "no" || attempt.reflection.difficultyFelt === "too hard"))
+    .sort((a, b) => parseISO(b.droppedAt || b.completedAt || b.updatedAt) - parseISO(a.droppedAt || a.completedAt || a.updatedAt))[0];
+}
+
+function findSuggestedChallenge(challengeId) {
+  return challengeSuggestions(activeSeason()).find((challenge) => challenge.id === challengeId);
+}
+
+function startChallenge(challengeId) {
+  const challenge = findSuggestedChallenge(challengeId);
+  const season = activeSeason();
+  if (!challenge || !season) return;
+  state.challengeAttempts ||= [];
+  state.challengeAttempts.push({
+    id: uid("challenge"),
+    userId: state.activeUserId,
+    seasonId: season.id,
+    challengeId: challenge.id,
+    title: challenge.title,
+    description: challenge.description,
+    category: challenge.category,
+    method: challenge.method,
+    difficulty: challenge.difficulty,
+    xp: challenge.xp,
+    linkedType: challenge.linkedType,
+    linkedId: challenge.linkedId,
+    status: "active",
+    startedAt: nowIso(),
+    updatedAt: nowIso(),
+  });
+  state.events.push(event(state.activeUserId, season.id, "challenge", `Started ${challenge.title}`, nowIso()));
+  persist();
+  toast("Challenge started.");
+  render();
+}
+
+function requestChallengeReflection(attemptId, outcome) {
+  const attempt = state.challengeAttempts.find((item) => item.id === attemptId && item.userId === state.activeUserId);
+  if (!attempt || attempt.status !== "active") return;
+  attempt.status = "reflection";
+  attempt.outcome = outcome === "completed" ? "completed" : "dropped";
+  attempt.updatedAt = nowIso();
+  ui.challengeReflectId = attempt.id;
+  persist();
+  persistUi();
+  render();
+}
+
+function openChallengeReflection(attemptId) {
+  ui.challengeReflectId = attemptId || "";
+  persistUi();
+  render();
+}
+
+function submitChallengeReflection(data) {
+  const attempt = state.challengeAttempts.find((item) => item.id === data.attemptId && item.userId === state.activeUserId);
+  if (!attempt || attempt.status !== "reflection") return;
+  const worked = String(data.worked || "").trim();
+  const blocked = String(data.blocked || "").trim();
+  if (!worked || !blocked) return;
+  const completed = attempt.outcome === "completed";
+  const at = nowIso();
+  attempt.status = completed ? "completed" : "dropped";
+  attempt.reflection = {
+    worked,
+    blocked,
+    again: data.again || "maybe",
+    difficultyFelt: data.difficultyFelt || "right",
+    createdAt: at,
+  };
+  attempt.updatedAt = at;
+  if (completed) attempt.completedAt = at;
+  else attempt.droppedAt = at;
+  state.knowledgeNotes.push({
+    id: uid("note"),
+    userId: state.activeUserId,
+    seasonId: attempt.seasonId,
+    tagType: "challenge",
+    tagId: attempt.id,
+    tagLabel: attempt.title,
+    title: attempt.title,
+    body: challengeReflectionBody(attempt),
+    createdAt: at,
+  });
+  if (completed) {
+    awardXp({
+      awardKey: `challenge-complete:${attempt.id}`,
+      eventType: "challenge_complete",
+      xpEarned: attempt.xp,
+      seasonId: attempt.seasonId,
+      metadata: { challengeId: attempt.challengeId, title: attempt.title, method: attempt.method },
+      label: `Challenge completed: ${attempt.title}`,
+      at,
+    });
+  }
+  awardXp({
+    awardKey: `challenge-reflection:${attempt.id}`,
+    eventType: "challenge_reflection",
+    xpEarned: XP_RULES.reflection,
+    seasonId: attempt.seasonId,
+    metadata: { challengeId: attempt.challengeId, title: attempt.title, outcome: attempt.outcome },
+    label: `Challenge reflected: ${attempt.title}`,
+    at,
+  });
+  ui.challengeReflectId = "";
+  persist();
+  persistUi();
+  toast(completed ? "Challenge completed and reflected." : "Challenge reflected.");
+  render();
+}
+
+function challengeReflectionBody(attempt) {
+  return [
+    `Challenge: ${attempt.title}`,
+    `Outcome: ${attempt.status}`,
+    `Method: ${attempt.method}`,
+    `Difficulty: ${attempt.difficulty}`,
+    "",
+    `What worked: ${attempt.reflection.worked}`,
+    `What got in the way: ${attempt.reflection.blocked}`,
+    `Try similar again: ${attempt.reflection.again}`,
+    `Difficulty felt: ${attempt.reflection.difficultyFelt}`,
+  ].join("\n");
 }
 
 function seasonMetrics(season) {
@@ -2316,6 +3101,8 @@ async function initApp() {
 
   if (currentUser) {
     state = await loadStateFromSupabase(currentUser.id);
+    reconcileXpAchievements({ silent: true });
+    persist();
   }
 
   render();
@@ -2326,6 +3113,8 @@ async function initApp() {
     if (newUser && (!currentUser || currentUser.id !== newUser.id)) {
       currentUser = newUser;
       state = await loadStateFromSupabase(currentUser.id);
+      reconcileXpAchievements({ silent: true });
+      persist();
       ui = normaliseUi({});
       render();
     } else if (!newUser) {
@@ -2395,6 +3184,9 @@ function createEmptyState(userId) {
     loops:         [],
     sessions:      [],
     events:        [],
+    xpEvents:      [],
+    xpAwards:      {},
+    challengeAttempts: [],
     knowledgeNotes: [],
   };
 }
