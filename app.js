@@ -7,8 +7,9 @@ const views = [
   ["habits", "Habits"],
   ["loops", "Loops"],
   ["analytics", "Analytics"],
-  ["profile", "Profile"],
   ["coach", "Coach"],
+  ["social", "Social"],
+  ["profile", "Profile"],
 ];
 
 const XP_RULES = {
@@ -33,10 +34,33 @@ let runtime     = {
   audio: null,
   serviceWorkerReady: null,
   metricTimer: null,
+  wakeLock: null,
+  social: null,          // { friends: [], pending: [], searchResults: [], loading: false, error: null, realtimeSub: null }
+  installPrompt: null,   // BeforeInstallPromptEvent, captured for PWA install
 };
 
 registerServiceWorker();
 initApp();               // async — sets up auth then renders
+
+// ── PWA install prompt ──────────────────────────────────────
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  runtime.installPrompt = event;
+  render(); // show install banner if applicable
+});
+window.addEventListener("appinstalled", () => {
+  runtime.installPrompt = null;
+  ui.installPromptDismissed = true;
+  persistUi();
+  render();
+});
+
+// ── Wake lock re-acquisition on visibility restore ──────────
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && runtime.session?.running) {
+    acquireWakeLock();
+  }
+});
 
 document.addEventListener("submit", (event) => {
   const form = event.target.closest("form[data-form]");
@@ -53,6 +77,7 @@ document.addEventListener("submit", (event) => {
   if (type === "edit-loop") updateLoop(data, form);
   if (type === "add-season") addSeason(data);
   if (type === "add-note") addKnowledgeNote(data);
+  if (type === "social-search") { ui.socialSearchQuery = data.query || ""; persistUi(); socialSearch(); }
 });
 
 document.addEventListener("change", (event) => {
@@ -112,6 +137,20 @@ document.addEventListener("click", (event) => {
   if (action === "select-loop-analytics") selectAnalyticsLoop(button.dataset.loopId);
   if (action === "start-challenge") startChallenge(button.dataset.challengeId);
   if (action === "drop-challenge") dropChallenge(button.dataset.challengeAttemptId);
+  // PWA install
+  if (action === "install-pwa") triggerPwaInstall();
+  if (action === "dismiss-install-prompt") dismissInstallPrompt();
+  // Session resume modal
+  if (action === "confirm-session-complete") confirmResumableSession(true);
+  if (action === "confirm-session-abandon") confirmResumableSession(false);
+  // Social
+  if (action === "social-search") socialSearch();
+  if (action === "send-friend-request") sendFriendRequest(button.dataset.friendId);
+  if (action === "accept-friend-request") respondToFriendRequest(button.dataset.friendshipId, true);
+  if (action === "decline-friend-request") respondToFriendRequest(button.dataset.friendshipId, false);
+  if (action === "cancel-friend-request") cancelFriendRequest(button.dataset.friendshipId);
+  if (action === "unfriend") unfriend(button.dataset.friendshipId);
+  if (action === "toggle-friend-detail") toggleFriendDetail(button.dataset.friendId);
 });
 
 // loadState is replaced by loadStateFromSupabase (called inside initApp).
@@ -139,6 +178,9 @@ function normaliseUi(next) {
     notesExpanded: Boolean(next.notesExpanded),
     mobileMoreOpen: Boolean(next.mobileMoreOpen),
     flippedMetricId: next.flippedMetricId || "",
+    installPromptDismissed: Boolean(next.installPromptDismissed),
+    socialSearchQuery: next.socialSearchQuery || "",
+    socialExpandedFriendId: next.socialExpandedFriendId || "",
   };
 }
 
@@ -163,6 +205,7 @@ function normaliseState(next) {
     xpEvents: next.xpEvents || [],
     xpAwards: next.xpAwards || {},
     challengeAttempts: next.challengeAttempts || [],
+    activeFocusSession: next.activeFocusSession || null,
   };
 }
 
@@ -384,7 +427,7 @@ function render() {
             <button class="${ui.view === "analytics" ? "active" : ""}" data-action="view" data-view="analytics" aria-label="Analytics">Analytics</button>
             <button class="nav-plus ${["habits", "loops", "reflection"].includes(ui.view) ? "active" : ""}" data-action="toggle-mobile-more" aria-label="Open habits, loops, and reflections">+</button>
             <button class="${ui.view === "coach" ? "active" : ""}" data-action="view" data-view="coach" aria-label="Coach">Coach</button>
-            <button class="${ui.view === "profile" ? "active" : ""}" data-action="view" data-view="profile" aria-label="Profile">Profile</button>
+            <button class="${ui.view === "social" ? "active" : ""}" data-action="view" data-view="social" aria-label="Social">Social</button>
           </div>
           ${
             ui.mobileMoreOpen
@@ -394,6 +437,8 @@ function render() {
         </nav>
       </aside>
       <main class="main">
+        ${renderInstallBanner()}
+        ${renderSessionResumeModal()}
         ${season ? renderCurrentView(user, season) : renderNoSeason()}
       </main>
     </div>
@@ -407,6 +452,7 @@ function renderCurrentView(user, season) {
   if (ui.view === "analytics") return renderAnalytics(user, season);
   if (ui.view === "profile") return renderProfile(user, season);
   if (ui.view === "coach") return renderCoach(user, season);
+  if (ui.view === "social") return renderSocial(user, season);
   return renderDashboard(user, season);
 }
 
@@ -451,8 +497,9 @@ function renderDashboard(user, season) {
   const xp = xpSummary(season);
   const todayWeekday = new Intl.DateTimeFormat("en-GB", { weekday: "long" }).format(new Date());
   const todayDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" }).format(new Date());
+  const profileIconBtn = `<button class="profile-icon-btn" data-action="view" data-view="profile" aria-label="Profile"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg></button>`;
   return `
-    ${pageHeader("Home", seasonSubtitle(season, todayWeekday, todayDate))}
+    ${pageHeader("Home", seasonSubtitle(season, todayWeekday, todayDate), profileIconBtn)}
     <section class="panel season-progress-panel" style="margin-top: 16px;">
       <div class="panel-head">
         <div>
@@ -1695,17 +1742,34 @@ function startSession(loopId) {
   const loop = state.loops.find((item) => item.id === loopId);
   if (!loop || !loop.steps.length) return;
   if (runtime.ticker) clearInterval(runtime.ticker);
+  const now = new Date();
   runtime.session = {
     id: uid("live"),
     loop,
     stepIndex: 0,
     remaining: loop.steps[0].minutes * 60,
     running: true,
-    startedAt: new Date(),
-    stepStartedAt: new Date(),
+    startedAt: now,
+    stepStartedAt: now,
     runSteps: [],
     beeped: new Set(),
   };
+  // Persist active session to Supabase so timer survives app closure
+  state.activeFocusSession = {
+    id: runtime.session.id,
+    loopId: loop.id,
+    loopTitle: loop.title,
+    steps: loop.steps.map((s) => ({ title: s.title, durationSeconds: s.minutes * 60 })),
+    startedAt: now.toISOString(),
+    stepIndex: 0,
+    stepStartedAt: now.toISOString(),
+    paused: false,
+    pausedAt: null,
+    totalPausedSeconds: 0,
+    seasonId: activeSeason()?.id || "",
+  };
+  persist();
+  acquireWakeLock();
   sendNotification("Kathēkõ session started", `${loop.title}: ${loop.steps[0].title}`);
   notifyCountdown(true);
   runtime.ticker = setInterval(tickSession, 1000);
@@ -1737,6 +1801,12 @@ function tickSession() {
 function pauseSession() {
   if (!runtime.session) return;
   runtime.session.running = false;
+  releaseWakeLock();
+  if (state.activeFocusSession) {
+    state.activeFocusSession.paused = true;
+    state.activeFocusSession.pausedAt = new Date().toISOString();
+    persist();
+  }
   toast("Session paused.");
   render();
 }
@@ -1744,6 +1814,14 @@ function pauseSession() {
 function resumeSession() {
   if (!runtime.session) return;
   runtime.session.running = true;
+  acquireWakeLock();
+  if (state.activeFocusSession && state.activeFocusSession.pausedAt) {
+    const pausedSeconds = Math.round((new Date() - new Date(state.activeFocusSession.pausedAt)) / 1000);
+    state.activeFocusSession.totalPausedSeconds = (state.activeFocusSession.totalPausedSeconds || 0) + pausedSeconds;
+    state.activeFocusSession.paused = false;
+    state.activeFocusSession.pausedAt = null;
+    persist();
+  }
   toast("Session resumed.");
   render();
 }
@@ -1769,6 +1847,12 @@ function finishStep() {
   session.remaining = next.minutes * 60;
   session.stepStartedAt = new Date();
   session.beeped = new Set();
+  // Keep server-side session in sync with step progress
+  if (state.activeFocusSession) {
+    state.activeFocusSession.stepIndex = session.stepIndex;
+    state.activeFocusSession.stepStartedAt = session.stepStartedAt.toISOString();
+    persist();
+  }
   sendNotification("Next Kathēkõ step", next.title);
   notifyCountdown(true);
   render();
@@ -1797,6 +1881,8 @@ function completeSession(completed) {
     event(state.activeUserId, season.id, "session", `${completed ? "Completed" : "Broke"} ${session.loop.title}`, endedAt.toISOString()),
   );
   evaluateAllActiveChallenges();
+  releaseWakeLock();
+  state.activeFocusSession = null;
   if (runtime.ticker) clearInterval(runtime.ticker);
   runtime.session = null;
   runtime.ticker = null;
@@ -1810,11 +1896,187 @@ function completeSession(completed) {
 function discardSession() {
   if (!runtime.session) return;
   if ((new Date() - runtime.session.startedAt) / 1000 > 60) return;
+  releaseWakeLock();
+  state.activeFocusSession = null;
   if (runtime.ticker) clearInterval(runtime.ticker);
   runtime.session = null;
   runtime.ticker = null;
   document.title = "Kathēkõ";
+  persist();
   toast("Accidental start discarded.");
+  render();
+}
+
+// ── Wake Lock ────────────────────────────────────────────────
+async function acquireWakeLock() {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    if (runtime.wakeLock && !runtime.wakeLock.released) return; // already held
+    runtime.wakeLock = await navigator.wakeLock.request("screen");
+    runtime.wakeLock.addEventListener("release", () => {
+      // Re-acquire automatically if session is still running (e.g. after tab switch)
+      if (runtime.session?.running) acquireWakeLock();
+    });
+  } catch {
+    // Wake lock silently unavailable (low battery, background, etc.)
+  }
+}
+
+function releaseWakeLock() {
+  if (runtime.wakeLock && !runtime.wakeLock.released) {
+    runtime.wakeLock.release().catch(() => {});
+  }
+  runtime.wakeLock = null;
+}
+
+// ── Server-synced session recovery ──────────────────────────
+function checkResumableSession() {
+  const saved = state?.activeFocusSession;
+  if (!saved) return;
+
+  const loop = state.loops.find((l) => l.id === saved.loopId);
+  if (!loop) {
+    // Loop deleted — clear orphaned session
+    state.activeFocusSession = null;
+    persist();
+    return;
+  }
+
+  const now = new Date();
+  const startedAt = new Date(saved.startedAt);
+  const totalPausedSeconds = saved.totalPausedSeconds || 0;
+  // If still paused at last save, count the additional paused time
+  const currentExtraPaused = saved.paused && saved.pausedAt
+    ? Math.round((now - new Date(saved.pausedAt)) / 1000)
+    : 0;
+  const elapsedSeconds = Math.round((now - startedAt) / 1000) - totalPausedSeconds - currentExtraPaused;
+  const totalLoopSeconds = (saved.steps || []).reduce((sum, s) => sum + s.durationSeconds, 0);
+
+  if (elapsedSeconds >= totalLoopSeconds) {
+    // Loop has already finished — prompt for confirmation
+    runtime.pendingResumableSession = { saved, loop };
+    render(); // session resume modal will appear
+  } else {
+    // Loop still in progress — reconstruct session state at correct step
+    let runningElapsed = elapsedSeconds;
+    let stepIndex = 0;
+    let remaining = 0;
+    for (let i = 0; i < (saved.steps || []).length; i++) {
+      if (runningElapsed < saved.steps[i].durationSeconds) {
+        stepIndex = i;
+        remaining = saved.steps[i].durationSeconds - runningElapsed;
+        break;
+      }
+      runningElapsed -= saved.steps[i].durationSeconds;
+      stepIndex = i + 1;
+    }
+    // Clamp in case of rounding edge
+    stepIndex = Math.min(stepIndex, loop.steps.length - 1);
+    remaining = Math.max(1, remaining);
+
+    if (runtime.ticker) clearInterval(runtime.ticker);
+    runtime.session = {
+      id: saved.id,
+      loop,
+      stepIndex,
+      remaining,
+      running: !saved.paused,
+      startedAt,
+      stepStartedAt: new Date(),
+      runSteps: [],
+      beeped: new Set(),
+    };
+    if (!saved.paused) {
+      acquireWakeLock();
+      runtime.ticker = setInterval(tickSession, 1000);
+    }
+    toast(`Session resumed: ${loop.title}.`);
+    render();
+  }
+}
+
+function confirmResumableSession(completed) {
+  const pending = runtime.pendingResumableSession;
+  if (!pending) return;
+  runtime.pendingResumableSession = null;
+
+  const { saved, loop } = pending;
+  const season = state.seasons.find((s) => s.id === saved.seasonId) || activeSeason();
+  if (!season) { state.activeFocusSession = null; persist(); render(); return; }
+
+  const endedAt = new Date();
+  const savedSession = {
+    id: uid("session"),
+    userId: state.activeUserId,
+    seasonId: season.id,
+    loopId: loop.id,
+    loopTitle: loop.title,
+    startedAt: saved.startedAt,
+    endedAt: endedAt.toISOString(),
+    durationSeconds: Math.round((endedAt - new Date(saved.startedAt)) / 1000),
+    completed,
+    steps: [],
+  };
+  state.sessions.push(savedSession);
+  state.events.push(event(state.activeUserId, season.id, "session",
+    `${completed ? "Completed" : "Broke"} ${loop.title} (background)`, endedAt.toISOString()));
+  evaluateAllActiveChallenges();
+  state.activeFocusSession = null;
+  persist();
+  toast(completed ? "Loop recorded as completed." : "Loop recorded as abandoned.");
+  render();
+}
+
+function renderSessionResumeModal() {
+  if (!runtime.pendingResumableSession) return "";
+  const { saved } = runtime.pendingResumableSession;
+  return `
+    <div class="modal-overlay">
+      <div class="modal-card">
+        <h3 class="modal-title">Session ended while away</h3>
+        <p class="modal-body">Your loop <strong>${escapeHtml(saved.loopTitle)}</strong> finished while the app was closed. Did you complete it?</p>
+        <div class="modal-actions">
+          <button class="primary-btn" data-action="confirm-session-complete">Yes, completed</button>
+          <button class="quiet-btn" data-action="confirm-session-abandon">No, abandon it</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ── PWA Install Banner ───────────────────────────────────────
+function renderInstallBanner() {
+  if (!runtime.installPrompt || ui.installPromptDismissed) return "";
+  return `
+    <div class="install-banner">
+      <div class="install-banner-text">
+        <strong>Add Kathēkõ to your home screen</strong>
+        <span>Install for the best experience — offline access, full screen, no browser bar.</span>
+      </div>
+      <div class="install-banner-actions">
+        <button class="primary-btn small-btn" data-action="install-pwa">Install</button>
+        <button class="ghost-btn small-btn" data-action="dismiss-install-prompt">Not now</button>
+      </div>
+    </div>
+  `;
+}
+
+function triggerPwaInstall() {
+  if (!runtime.installPrompt) return;
+  runtime.installPrompt.prompt();
+  runtime.installPrompt.userChoice.then((choice) => {
+    if (choice.outcome === "accepted") {
+      runtime.installPrompt = null;
+      ui.installPromptDismissed = true;
+      persistUi();
+      render();
+    }
+  });
+}
+
+function dismissInstallPrompt() {
+  ui.installPromptDismissed = true;
+  persistUi();
   render();
 }
 
@@ -2467,11 +2729,22 @@ function recomputeXpAchievements() {
 
 function syncProfileXp() {
   if (!currentUser || !state) return;
-  const total = xpSummary().total;
+  const xp = xpSummary();
+  const season = activeSeason();
+  const activeHabitsCount = season ? activeHabits(season).length : 0;
+  const perfScore = season ? overallPerformance(season) : 0;
   _db.from("profiles")
-    .update({ xp: total, level: xpLevel(total) })
+    .update({
+      xp: xp.total,
+      level: xpLevel(xp.total),
+      challenge_xp: xp.challenge,
+      season_xp: xp.season,
+      overall_performance: Math.round(perfScore * 10) / 10,
+      active_habits_count: activeHabitsCount,
+      email: currentUser.email || "",
+    })
     .eq("id", currentUser.id)
-    .then(({ error }) => { if (error) console.warn("XP profile sync failed:", error.message); });
+    .then(({ error }) => { if (error) console.warn("Profile sync failed:", error.message); });
 }
 
 function reconcileXpAchievements({ silent = false } = {}) {
@@ -3139,12 +3412,373 @@ function habitTypeChip(type) {
   return `<span class="chip neutral">${type === "break" ? "Break" : "Build"}</span>`;
 }
 
+// ── Social page ──────────────────────────────────────────────
+
+function renderSocial(user) {
+  const social = runtime.social;
+  const myXp = xpSummary();
+
+  const friendsHtml = (() => {
+    if (!social) return `<div class="empty">Loading…</div>`;
+    if (social.error) return `<div class="empty">Could not load social data — check connection.</div>`;
+    if (!social.friends.length) return `<div class="empty">No friends yet. Search for someone above.</div>`;
+    return social.friends.map((item) => renderFriendRow(item, myXp)).join("");
+  })();
+
+  const pendingHtml = (() => {
+    if (!social || (!social.incoming.length && !social.outgoing.length)) return "";
+    const incoming = social.incoming.map(renderIncomingRequest).join("");
+    const outgoing = social.outgoing.map(renderOutgoingRequest).join("");
+    return `
+      <section class="panel" style="margin-top:16px;">
+        <div class="panel-head"><div><h3 class="panel-title">Requests</h3></div></div>
+        ${incoming}${outgoing}
+      </section>
+    `;
+  })();
+
+  return `
+    ${pageHeader("Social", "Friends & accountability")}
+    <section class="panel" style="margin-top:16px;">
+      <form data-form="social-search" class="social-search-row">
+        <input name="query" class="social-search-input" placeholder="Search by name or email…"
+               value="${escapeAttr(ui.socialSearchQuery)}" autocomplete="off" />
+        <button type="submit" class="primary-btn">Search</button>
+      </form>
+      ${renderSearchResults(social)}
+    </section>
+    ${pendingHtml}
+    <section class="panel" style="margin-top:16px;">
+      <div class="panel-head">
+        <div><h3 class="panel-title">Friends</h3><p class="panel-note">XP gained since connecting.</p></div>
+      </div>
+      ${friendsHtml}
+    </section>
+  `;
+}
+
+function renderSearchResults(social) {
+  if (!social || !social.searchResults.length) return "";
+  const myId = currentUser?.id;
+  const friendIds = new Set((social.friends || []).map((f) => f.profile.id));
+  const pendingIds = new Set([
+    ...(social.incoming || []).map((r) => r.profile.id),
+    ...(social.outgoing || []).map((r) => r.profile.id),
+  ]);
+  return `
+    <div class="search-results">
+      ${social.searchResults.map((profile) => {
+        if (profile.id === myId) return "";
+        const isFriend = friendIds.has(profile.id);
+        const isPending = pendingIds.has(profile.id);
+        return `
+          <div class="row">
+            <div>
+              <p class="row-title">${escapeHtml(profile.display_name || profile.username)}</p>
+              <p class="row-meta">Level ${profile.level || 1} · ${escapeHtml(profile.username || "")}</p>
+            </div>
+            ${isFriend
+              ? `<span class="chip green">Friends</span>`
+              : isPending
+              ? `<span class="chip neutral">Pending</span>`
+              : `<button class="primary-btn small-btn" data-action="send-friend-request" data-friend-id="${escapeAttr(profile.id)}">Add</button>`
+            }
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderFriendRow(item, myXp) {
+  const { friendship, profile } = item;
+  const isRequester = friendship.requester_id === currentUser?.id;
+  const myBaseline = isRequester ? (friendship.xp_baseline_requester || 0) : (friendship.xp_baseline_addressee || 0);
+  const friendBaseline = isRequester ? (friendship.xp_baseline_addressee || 0) : (friendship.xp_baseline_requester || 0);
+  const myGain = Math.max(0, myXp.total - myBaseline);
+  const friendGain = Math.max(0, (profile.xp || 0) - friendBaseline);
+  const relative = myGain - friendGain;
+  const relativeLabel = relative > 0 ? `+${relative} XP ahead` : relative < 0 ? `${relative} XP behind` : "Even";
+  const relativeClass = relative > 0 ? "chip green" : relative < 0 ? "chip coral" : "chip neutral";
+  const isExpanded = ui.socialExpandedFriendId === friendship.id;
+
+  const expandedHtml = isExpanded ? renderFriendDetail(item, myXp, myBaseline, friendBaseline, myGain, friendGain) : "";
+
+  return `
+    <div class="friend-row">
+      <div class="row friend-summary" data-friendship-id="${escapeAttr(friendship.id)}">
+        <div>
+          <p class="row-title">${escapeHtml(profile.display_name || profile.username)}</p>
+          <p class="row-meta">Level ${profile.level || 1}</p>
+        </div>
+        <div class="friend-row-right">
+          <span class="${relativeClass}">${escapeHtml(relativeLabel)}</span>
+          <button class="ghost-btn small-btn" data-action="toggle-friend-detail" data-friend-id="${escapeAttr(friendship.id)}">${isExpanded ? "Hide" : "Details"}</button>
+        </div>
+      </div>
+      ${expandedHtml}
+    </div>
+  `;
+}
+
+function renderFriendDetail(item, myXp, myBaseline, friendBaseline, myGain, friendGain) {
+  const { friendship, profile } = item;
+  const isRequester = friendship.requester_id === currentUser?.id;
+  const myChallengeBaseline = isRequester
+    ? (friendship.challenge_xp_baseline_requester || 0)
+    : (friendship.challenge_xp_baseline_addressee || 0);
+  const friendChallengeBaseline = isRequester
+    ? (friendship.challenge_xp_baseline_addressee || 0)
+    : (friendship.challenge_xp_baseline_requester || 0);
+  const myChallengeGain = Math.max(0, myXp.challenge - myChallengeBaseline);
+  const friendChallengeGain = Math.max(0, (profile.challenge_xp || 0) - friendChallengeBaseline);
+  const combinedGain = Math.min(myGain, friendGain);
+  const relChallenge = myChallengeGain - friendChallengeGain;
+  const connectedSince = friendship.accepted_at
+    ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" }).format(new Date(friendship.accepted_at))
+    : "Unknown";
+
+  return `
+    <div class="friend-detail">
+      <div class="friend-stats-grid">
+        <div class="friend-stat">
+          <span class="friend-stat-label">Progress together</span>
+          <span class="friend-stat-value">${combinedGain} XP</span>
+          <span class="friend-stat-note">Min of both gains since connecting</span>
+        </div>
+        <div class="friend-stat">
+          <span class="friend-stat-label">Challenge XP edge</span>
+          <span class="friend-stat-value ${relChallenge >= 0 ? "green-text" : "coral-text"}">${relChallenge >= 0 ? "+" : ""}${relChallenge}</span>
+          <span class="friend-stat-note">Your challenge XP vs theirs</span>
+        </div>
+        <div class="friend-stat">
+          <span class="friend-stat-label">Their level</span>
+          <span class="friend-stat-value">${profile.level || 1}</span>
+          <span class="friend-stat-note">Current XP level</span>
+        </div>
+        <div class="friend-stat">
+          <span class="friend-stat-label">Performance</span>
+          <span class="friend-stat-value">${Math.round(profile.overall_performance || 0)}%</span>
+          <span class="friend-stat-note">Their overall habit performance</span>
+        </div>
+        <div class="friend-stat">
+          <span class="friend-stat-label">Active habits</span>
+          <span class="friend-stat-value">${profile.active_habits_count || 0}</span>
+          <span class="friend-stat-note">This season</span>
+        </div>
+        <div class="friend-stat">
+          <span class="friend-stat-label">Friends since</span>
+          <span class="friend-stat-value">${escapeHtml(connectedSince)}</span>
+          <span class="friend-stat-note">Your baseline set on this date</span>
+        </div>
+      </div>
+      <div style="margin-top:12px;">
+        <button class="quiet-btn small-btn" data-action="unfriend" data-friendship-id="${escapeAttr(friendship.id)}">Unfriend</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderIncomingRequest(item) {
+  const { friendship, profile } = item;
+  return `
+    <div class="row">
+      <div>
+        <p class="row-title">${escapeHtml(profile.display_name || profile.username)}</p>
+        <p class="row-meta">Wants to connect</p>
+      </div>
+      <div class="friend-row-right">
+        <button class="primary-btn small-btn" data-action="accept-friend-request" data-friendship-id="${escapeAttr(friendship.id)}">Accept</button>
+        <button class="quiet-btn small-btn" data-action="decline-friend-request" data-friendship-id="${escapeAttr(friendship.id)}">Decline</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderOutgoingRequest(item) {
+  const { friendship, profile } = item;
+  return `
+    <div class="row">
+      <div>
+        <p class="row-title">${escapeHtml(profile.display_name || profile.username)}</p>
+        <p class="row-meta">Request sent</p>
+      </div>
+      <button class="ghost-btn small-btn" data-action="cancel-friend-request" data-friendship-id="${escapeAttr(friendship.id)}">Cancel</button>
+    </div>
+  `;
+}
+
+// ── Social data loading ──────────────────────────────────────
+
+async function loadSocialData() {
+  if (!currentUser) return;
+  runtime.social = { friends: [], incoming: [], outgoing: [], searchResults: [], loading: true, error: null };
+  render();
+  try {
+    // Load all friendships involving this user
+    const { data: friendships, error: fErr } = await _db
+      .from("friendships")
+      .select("*")
+      .or(`requester_id.eq.${currentUser.id},addressee_id.eq.${currentUser.id}`);
+    if (fErr) throw fErr;
+
+    const myId = currentUser.id;
+    const accepted   = (friendships || []).filter((f) => f.status === "accepted");
+    const incoming   = (friendships || []).filter((f) => f.status === "pending" && f.addressee_id === myId);
+    const outgoing   = (friendships || []).filter((f) => f.status === "pending" && f.requester_id === myId);
+
+    // Collect all unique friend/requester/addressee IDs we need profiles for
+    const profileIds = [...new Set([
+      ...accepted.map((f) => f.requester_id === myId ? f.addressee_id : f.requester_id),
+      ...incoming.map((f) => f.requester_id),
+      ...outgoing.map((f) => f.addressee_id),
+    ])];
+
+    let profileMap = {};
+    if (profileIds.length) {
+      const { data: profiles, error: pErr } = await _db
+        .from("profiles")
+        .select("id, display_name, username, xp, level, overall_performance, active_habits_count, challenge_xp, season_xp")
+        .in("id", profileIds);
+      if (pErr) throw pErr;
+      (profiles || []).forEach((p) => { profileMap[p.id] = p; });
+    }
+
+    runtime.social = {
+      loading: false,
+      error: null,
+      searchResults: runtime.social.searchResults || [],
+      friends: accepted.map((f) => ({
+        friendship: f,
+        profile: profileMap[f.requester_id === myId ? f.addressee_id : f.requester_id] || {},
+      })),
+      incoming: incoming.map((f) => ({ friendship: f, profile: profileMap[f.requester_id] || {} })),
+      outgoing: outgoing.map((f) => ({ friendship: f, profile: profileMap[f.addressee_id] || {} })),
+    };
+
+    // Subscribe to real-time profile updates for friends
+    subscribeToFriendProfiles(profileIds);
+  } catch (err) {
+    runtime.social = { friends: [], incoming: [], outgoing: [], searchResults: [], loading: false, error: err.message };
+  }
+  render();
+}
+
+function subscribeToFriendProfiles(profileIds) {
+  // Unsubscribe from any previous subscription
+  if (runtime.social?.realtimeSub) {
+    _db.removeChannel(runtime.social.realtimeSub);
+  }
+  if (!profileIds.length) return;
+  const sub = _db
+    .channel("friend-profiles")
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles" }, (payload) => {
+      if (!profileIds.includes(payload.new.id)) return;
+      // Merge the update into our cached profiles
+      if (runtime.social) {
+        const merge = (list) => list.map((item) => {
+          if (item.profile.id === payload.new.id) return { ...item, profile: { ...item.profile, ...payload.new } };
+          return item;
+        });
+        runtime.social.friends  = merge(runtime.social.friends);
+        runtime.social.incoming = merge(runtime.social.incoming);
+        runtime.social.outgoing = merge(runtime.social.outgoing);
+        if (ui.view === "social") render();
+      }
+    })
+    .subscribe();
+  if (runtime.social) runtime.social.realtimeSub = sub;
+}
+
+async function socialSearch() {
+  const query = ui.socialSearchQuery.trim();
+  if (!query) {
+    if (runtime.social) { runtime.social.searchResults = []; render(); }
+    return;
+  }
+  const { data, error } = await _db
+    .from("profiles")
+    .select("id, display_name, username, level, xp")
+    .or(`display_name.ilike.%${query}%,username.ilike.%${query}%,email.ilike.%${query}%`)
+    .limit(10);
+  if (!error && runtime.social) {
+    runtime.social.searchResults = data || [];
+    render();
+  }
+}
+
+async function sendFriendRequest(friendId) {
+  if (!currentUser || !friendId) return;
+  const { error } = await _db.from("friendships").insert({
+    requester_id: currentUser.id,
+    addressee_id: friendId,
+    status: "pending",
+  });
+  if (error) { toast(error.code === "23505" ? "Request already sent." : "Could not send request."); return; }
+  toast("Friend request sent.");
+  loadSocialData();
+}
+
+async function respondToFriendRequest(friendshipId, accept) {
+  if (!currentUser) return;
+  if (accept) {
+    // Record XP baselines at the moment of acceptance
+    const myXp = xpSummary();
+    // Fetch the requester's profile to get their current XP
+    const friendship = (runtime.social?.incoming || []).find((r) => r.friendship.id === friendshipId);
+    const requesterXp = friendship?.profile?.xp || 0;
+    const requesterChallengeXp = friendship?.profile?.challenge_xp || 0;
+    const { error } = await _db.from("friendships").update({
+      status: "accepted",
+      accepted_at: new Date().toISOString(),
+      xp_baseline_requester: requesterXp,
+      xp_baseline_addressee: myXp.total,
+      challenge_xp_baseline_requester: requesterChallengeXp,
+      challenge_xp_baseline_addressee: myXp.challenge,
+    }).eq("id", friendshipId);
+    if (error) { toast("Could not accept request."); return; }
+    toast("Friend request accepted.");
+  } else {
+    const { error } = await _db.from("friendships").update({ status: "declined" }).eq("id", friendshipId);
+    if (error) { toast("Could not decline request."); return; }
+    toast("Request declined.");
+  }
+  loadSocialData();
+}
+
+async function cancelFriendRequest(friendshipId) {
+  if (!currentUser) return;
+  const { error } = await _db.from("friendships").delete().eq("id", friendshipId);
+  if (error) { toast("Could not cancel request."); return; }
+  toast("Request cancelled.");
+  loadSocialData();
+}
+
+async function unfriend(friendshipId) {
+  if (!currentUser) return;
+  if (!confirm("Unfriend this person?")) return;
+  const { error } = await _db.from("friendships").delete().eq("id", friendshipId);
+  if (error) { toast("Could not unfriend."); return; }
+  toast("Unfriended.");
+  ui.socialExpandedFriendId = "";
+  persistUi();
+  loadSocialData();
+}
+
+function toggleFriendDetail(friendshipId) {
+  ui.socialExpandedFriendId = ui.socialExpandedFriendId === friendshipId ? "" : friendshipId;
+  persistUi();
+  render();
+}
+
 function setView(view) {
   ui.view = view === "challenges" ? "coach" : view;
   ui.mobileMoreOpen = false;
   ui.flippedMetricId = "";
   clearTimeout(runtime.metricTimer);
   persistUi();
+  // Load social data fresh each time the social view is opened
+  if (ui.view === "social" && currentUser) loadSocialData();
   render();
 }
 
@@ -3392,6 +4026,7 @@ async function initApp() {
     reconcileXpAchievements({ silent: true });
     evaluateAllActiveChallenges();
     persist();
+    checkResumableSession(); // reconstruct or prompt for any session that ran while app was closed
   }
 
   render();
@@ -3405,6 +4040,7 @@ async function initApp() {
       reconcileXpAchievements({ silent: true });
       evaluateAllActiveChallenges();
       persist();
+      checkResumableSession();
       ui = normaliseUi({});
       render();
     } else if (!newUser) {
@@ -3478,6 +4114,7 @@ function createEmptyState(userId) {
     xpAwards:      {},
     challengeAttempts: [],
     knowledgeNotes: [],
+    activeFocusSession: null,
   };
 }
 
