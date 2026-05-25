@@ -450,7 +450,7 @@ textarea:focus-visible {
 }
 
 .panel.challenge-panel {
-  background: var(--paper-strong);
+  background: var(--coral-soft);
 }
 
 .panel.archive-panel {
@@ -487,6 +487,74 @@ textarea:focus-visible {
 
 .panel.profile-account {
   background: var(--pink);
+}
+
+.panel.season-map-panel {
+  position: relative;
+  display: grid;
+  padding: 0;
+  overflow: hidden;
+  transform-style: preserve-3d;
+  transition: transform 240ms ease;
+  cursor: pointer;
+}
+
+.panel.season-map-panel.flipped {
+  background: var(--blue-soft);
+}
+
+.panel.season-map-panel .season-face {
+  grid-area: 1 / 1;
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  gap: 14px;
+  padding: 16px;
+  backface-visibility: hidden;
+  transition:
+    opacity 180ms ease,
+    transform 240ms ease;
+}
+
+.panel.season-map-panel .season-front {
+  opacity: 1;
+  transform: rotateY(0);
+}
+
+.panel.season-map-panel .season-back {
+  opacity: 0;
+  transform: rotateY(-180deg);
+  justify-content: center;
+}
+
+.panel.season-map-panel.flipped .season-front {
+  opacity: 0;
+  transform: rotateY(180deg);
+  pointer-events: none;
+}
+
+.panel.season-map-panel.flipped .season-back {
+  opacity: 1;
+  transform: rotateY(0);
+}
+
+.season-note-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 3px solid var(--ink);
+  border-radius: 4px;
+  background: var(--paper-strong);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.season-note-text {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 850;
+  font-size: 0.98rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
 }
 
 .panel.flush {
@@ -558,6 +626,14 @@ textarea:focus-visible {
 }
 
 .grid.four .metric.metric-blue {
+  background: var(--blue-soft);
+}
+
+.grid.four .metric.metric-coral {
+  background: var(--coral-soft);
+}
+
+.metric.metric-coral.flipped {
   background: var(--blue-soft);
 }
 
@@ -659,7 +735,7 @@ textarea:focus-visible {
 }
 
 .chip.blue {
-  background: var(--blue-soft);
+  background: #eadfc9;
 }
 
 .chip.amber,
@@ -669,6 +745,7 @@ textarea:focus-visible {
 
 .chip.coral {
   background: var(--coral-soft);
+  color: var(--ink);
 }
 
 .chip.neutral {
@@ -709,7 +786,7 @@ textarea:focus-visible {
 
 .season-week.future {
   color: #776f63;
-  background: #e9dec9;
+  background: var(--paper-strong);
 }
 
 .season-week strong {
@@ -832,7 +909,12 @@ textarea:focus-visible {
 }
 
 .day-toggle.today {
+  box-shadow: 2px 2px 0 var(--ink), inset 0 0 0 3px var(--amber);
+}
+
+.day-toggle.today.done {
   background: var(--amber);
+  color: var(--paper-strong);
 }
 
 .day-toggle small {
@@ -903,6 +985,12 @@ textarea:focus-visible {
   box-shadow: 2px 2px 0 var(--ink);
 }
 
+.field input::placeholder,
+.field textarea::placeholder {
+  color: #a39b8d;
+  opacity: 1;
+}
+
 .note-tools {
   display: flex;
   align-items: center;
@@ -968,7 +1056,17 @@ textarea:focus-visible {
 }
 
 .progress-cell.today {
+  box-shadow: 2px 2px 0 var(--ink), inset 0 0 0 3px var(--amber);
+}
+
+.progress-cell.today.missed {
+  background: #e0d3bb;
+  color: #6d6659;
+}
+
+.progress-cell.today.done {
   background: var(--amber);
+  color: var(--paper-strong);
 }
 
 .bar-list {
@@ -1140,7 +1238,7 @@ textarea:focus-visible {
 }
 
 .table-link.active {
-  color: var(--coral);
+  color: var(--paper-strong);
 }
 
 .summary-grid {
@@ -1162,6 +1260,14 @@ textarea:focus-visible {
 }
 
 .summary-stat:nth-child(2n) {
+  background: var(--blue-soft);
+}
+
+.profile-xp-grid .summary-stat:first-child {
+  background: var(--blue-soft);
+}
+
+.profile-xp-grid .summary-stat {
   background: var(--blue-soft);
 }
 
@@ -1196,6 +1302,10 @@ textarea:focus-visible {
   display: block;
   height: 100%;
   background: var(--green);
+}
+
+.season-map-meter {
+  margin-top: 14px;
 }
 
 .challenge-list {
@@ -1417,7 +1527,13 @@ textarea:focus-visible {
     box-shadow: 4px 4px 0 var(--ink);
   }
 
-  .topbar,
+  .topbar {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
   .panel-head {
     display: grid;
   }
@@ -1427,7 +1543,8 @@ textarea:focus-visible {
   }
 
   .toolbar {
-    justify-content: flex-start;
+    margin-left: auto;
+    justify-content: flex-end;
   }
 
   .sidebar {
@@ -1464,8 +1581,16 @@ textarea:focus-visible {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
+  .season-map-meter {
+    margin-top: 12px;
+  }
+
   .row {
     grid-template-columns: 1fr;
+  }
+
+  .friend-summary {
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   .challenge-card {
@@ -1855,6 +1980,8 @@ textarea:focus-visible {
 }
 .friend-summary {
   cursor: default;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
 }
 .friend-row-right {
   display: flex;
@@ -1910,6 +2037,5 @@ textarea:focus-visible {
 }
 .chip.coral {
   background: var(--coral-soft);
-  color: var(--coral);
+  color: var(--ink);
 }
-
