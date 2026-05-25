@@ -451,21 +451,15 @@ function renderDashboard(user, season) {
   const xp = xpSummary(season);
   return `
     ${pageHeader("Home", seasonSubtitle(season, metrics))}
-    <section class="grid four">
-      ${metricCard("Season completed", `${seasonProgress(season)}%`, "Progress through the active 84-day season window.", "dashboard-season-completed")}
-      ${metricCard("Lifetime XP", `${xp.total}`, "Total XP earned across all seasons in this account.", "dashboard-lifetime-xp")}
-      ${metricCard("Season XP", `${xp.season}`, "XP earned inside the active 12-week season.", "dashboard-season-xp")}
-      ${metricCard("Weekly target", `${metrics.weeklyScore}%`, "Share of this week's active habit and loop targets completed.", "dashboard-weekly-target")}
-    </section>
-    <section class="panel xp-panel" style="margin-top: 16px;">
+    <section class="panel season-progress-panel" style="margin-top: 16px;">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Progress engine</h3>
-          <p class="panel-note">Current level ${xp.level} - ${xp.toNext} XP needed to reach level ${xp.level + 1}.</p>
+          <h3 class="panel-title">Season completed</h3>
+          <p class="panel-note">${seasonProgress(season)}% complete - ${metrics.daysLeft} day${metrics.daysLeft === 1 ? "" : "s"} left in this 12-week season.</p>
         </div>
         <span class="chip blue">${longest.weeks} week${longest.weeks === 1 ? "" : "s"} best streak</span>
       </div>
-      <div class="xp-meter"><span style="width:${xp.nextProgress}%"></span></div>
+      <div class="xp-meter"><span style="width:${seasonProgress(season)}%"></span></div>
     </section>
     <section class="panel" style="margin-top: 16px;">
       <div class="panel-head">
@@ -490,14 +484,16 @@ function renderDashboard(user, season) {
           ${
             habits.length
               ? habits
-                  .map((habit) => {
-                    const done = Boolean(habit.logs[todayISO()]);
-                    return `
-                      <div class="row">
-                        <div>${habitStatusLine(habit, season)}</div>
-                        <button class="${done ? "primary-btn" : "quiet-btn"}" data-action="toggle-habit" data-habit-id="${habit.id}" data-date="${todayISO()}">${done ? "Logged" : "Log"}</button>
-                      </div>
-                    `;
+	                  .map((habit) => {
+	                    const done = Boolean(habit.logs[todayISO()]);
+	                    return `
+	                      <div class="row">
+	                        <div>
+	                          <p class="row-title">${escapeHtml(habit.title)}</p>
+	                        </div>
+	                        <button class="${done ? "primary-btn" : "quiet-btn"}" data-action="toggle-habit" data-habit-id="${habit.id}" data-date="${todayISO()}">${done ? "Logged" : "Log"}</button>
+	                      </div>
+	                    `;
                   })
                   .join("")
               : `<div class="empty">Create your first habit.</div>`
@@ -599,6 +595,7 @@ function renderHabits(user, season) {
         }
       </div>
     </section>
+    ${renderHabitGridPanel(active, season)}
     <section class="panel" style="margin-top:16px;">
       <div class="panel-head">
         <div>
@@ -628,6 +625,49 @@ function renderHabits(user, season) {
             : `<div class="empty">No archived habits.</div>`
         }
       </div>
+    </section>
+  `;
+}
+
+function renderHabitGridPanel(habits, season) {
+  const selectedHabit = habits.find((habit) => habit.id === ui.analyticsHabitId) || habits[0];
+  if (selectedHabit && ui.analyticsHabitId !== selectedHabit.id) {
+    ui.analyticsHabitId = selectedHabit.id;
+    persistUi();
+  }
+  return `
+    <section class="panel habit-grid-panel" style="margin-top:16px;">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">Habit grid</h3>
+          <p class="panel-note">84 days, anchored to season start.</p>
+        </div>
+        <select data-analytics-habit aria-label="Habit grid habit">
+          ${habits
+            .map(
+              (habit) =>
+                `<option value="${habit.id}" ${selectedHabit?.id === habit.id ? "selected" : ""}>${escapeHtml(habit.title)}</option>`,
+            )
+            .join("")}
+        </select>
+      </div>
+      ${
+        selectedHabit
+          ? `
+            <div class="progress-grid">
+              ${range(84)
+                .map((offset) => {
+                  const date = toISO(addDays(parseISO(season.startDate), offset));
+                  const done = Boolean(selectedHabit.logs[date]);
+                  const future = parseISO(date) > startOfToday();
+                  const missed = !done && !future;
+                  return `<button class="progress-cell ${done ? "done" : ""} ${future ? "future" : ""} ${missed ? "missed" : ""} ${date === todayISO() ? "today" : ""}" data-action="toggle-habit" data-habit-id="${selectedHabit.id}" data-date="${date}" title="${formatDate(date)}">${parseISO(date).getDate()}</button>`;
+                })
+                .join("")}
+            </div>
+          `
+          : `<div class="empty">No active habits.</div>`
+      }
     </section>
   `;
 }
@@ -894,9 +934,7 @@ function renderAnalytics(user, season) {
   const loops = activeLoops(season);
   const xp = xpSummary(season);
   const insight = coachInsight(season);
-  const selectedHabit = habits.find((habit) => habit.id === ui.analyticsHabitId) || habits[0];
   const selectedLoop = loops.find((loop) => loop.id === ui.analyticsLoopId) || loops[0];
-  if (!ui.analyticsHabitId && selectedHabit) ui.analyticsHabitId = selectedHabit.id;
   if (!ui.analyticsLoopId && selectedLoop) ui.analyticsLoopId = selectedLoop.id;
   persistUi();
   const metrics = seasonMetrics(season);
@@ -906,14 +944,20 @@ function renderAnalytics(user, season) {
       "Analytics",
       "Season performance, habit detail, loop execution, and historical data.",
       `<button class="quiet-btn" data-action="export-csv">Export CSV</button><button class="quiet-btn" data-action="export-json">Export JSON</button>`,
-    )}
-    <section class="grid four">
-      ${metricCard("Plan progress", `${seasonProgress(season)}%`, "Progress through the active 84-day season window.", "analytics-plan-progress")}
-      ${metricCard("Habit success", `${metrics.averageHabitRate}%`, "Average weekly-target success across active habits.", "analytics-habit-success")}
-      ${metricCard("Loop completion", `${metrics.loopCompletionRate}%`, "Completed loop sessions divided by total loop sessions.", "analytics-loop-completion")}
-      ${metricCard("Best weekly streak", `${bestStreak.weeks}`, `Longest weekly-target streak. Current leader: ${bestStreak.habitTitle}.`, "analytics-best-streak")}
-    </section>
-    <section class="insights-grid" style="margin-top:16px;">
+	    )}
+		    <section class="grid four">
+		      ${metricCard("Habit success", `${metrics.averageHabitRate}%`, "Average weekly-target success across active habits.", "analytics-habit-success")}
+		      ${metricCard("Overall performance", `${overallPerformance(season)}%`, `Blended score from season progress, habits, loops, and challenge activity. Band: ${performanceBandLabel(overallPerformance(season))}.`, "analytics-overall-performance")}
+		      ${metricCard("Challenge XP gained", `${xp.challenge}`, "XP earned from completed tracked challenge rewards.", "analytics-challenge-xp")}
+		      ${metricCard("Best weekly streak", `${bestStreak.weeks}`, `Longest weekly-target streak. Current leader: ${bestStreak.habitTitle}.`, "analytics-best-streak")}
+		    </section>
+		    <section class="grid four secondary-metrics" style="margin-top:16px;">
+		      ${metricCard("Progress engine", `Level ${xp.level}`, `${xp.total} lifetime XP. ${xp.toNext} XP needed to reach level ${xp.level + 1}.`, "dashboard-progress-engine", "blue")}
+		      ${metricCard("Lifetime XP", `${xp.total}`, "Total XP earned across all seasons in this account.", "dashboard-lifetime-xp")}
+		      ${metricCard("Season XP", `${xp.season}`, "XP earned inside the active 12-week season.", "dashboard-season-xp")}
+		      ${metricCard("Weekly target", `${metrics.weeklyScore}%`, "Share of this week's active habit and loop targets completed.", "dashboard-weekly-target")}
+		    </section>
+		    <section class="insights-grid" style="margin-top:16px;">
       <div class="panel overview-panel">
         <div class="panel-head">
           <div>
@@ -925,45 +969,8 @@ function renderAnalytics(user, season) {
           ${insight.map((line) => `<div class="row"><div><p class="row-title">${escapeHtml(line.title)}</p><p class="row-meta">${escapeHtml(line.body)}</p></div></div>`).join("")}
         </div>
       </div>
-      <div class="metric-stack">
-        ${metricCard("Overall performance", `${overallPerformance(season)}%`, `Blended score from season progress, habits, loops, and challenge activity. Band: ${performanceBandLabel(overallPerformance(season))}.`, "analytics-overall-performance", "purple")}
-        ${metricCard("Challenge XP gained", `${xp.challenge}`, "XP earned from completed tracked challenge rewards.", "analytics-challenge-xp")}
-      </div>
-    </section>
-    <section class="grid two" style="margin-top:16px;">
-      <div class="panel habit-grid-panel">
-        <div class="panel-head">
-          <div>
-            <h3 class="panel-title">Habit grid</h3>
-            <p class="panel-note">84 days, anchored to season start.</p>
-          </div>
-          <select data-analytics-habit aria-label="Analytics habit">
-            ${habits
-              .map(
-                (habit) =>
-                  `<option value="${habit.id}" ${selectedHabit?.id === habit.id ? "selected" : ""}>${escapeHtml(habit.title)}</option>`,
-              )
-              .join("")}
-          </select>
-        </div>
-        ${
-          selectedHabit
-            ? `
-              <div class="progress-grid">
-                ${range(84)
-                  .map((offset) => {
-                    const date = toISO(addDays(parseISO(season.startDate), offset));
-                    const done = Boolean(selectedHabit.logs[date]);
-                    const future = parseISO(date) > startOfToday();
-                    const missed = !done && !future;
-                    return `<button class="progress-cell ${done ? "done" : ""} ${future ? "future" : ""} ${missed ? "missed" : ""} ${date === todayISO() ? "today" : ""}" data-action="toggle-habit" data-habit-id="${selectedHabit.id}" data-date="${date}" title="${formatDate(date)}">${parseISO(date).getDate()}</button>`;
-                  })
-                  .join("")}
-              </div>
-            `
-            : `<div class="empty">No active habits.</div>`
-        }
-      </div>
+	    </section>
+    <section class="grid" style="margin-top:16px;">
       <div class="panel">
         <div class="panel-head">
           <div>
