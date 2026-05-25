@@ -151,6 +151,7 @@ document.addEventListener("click", (event) => {
   if (action === "cancel-friend-request") cancelFriendRequest(button.dataset.friendshipId);
   if (action === "unfriend") unfriend(button.dataset.friendshipId);
   if (action === "toggle-friend-detail") toggleFriendDetail(button.dataset.friendId);
+  if (action === "reload-social") loadSocialData();
 });
 
 // loadState is replaced by loadStateFromSupabase (called inside initApp).
@@ -3420,22 +3421,21 @@ function renderSocial(user) {
 
   const friendsHtml = (() => {
     if (!social) return `<div class="empty">Loading…</div>`;
-    if (social.error) return `<div class="empty">Could not load social data — check connection.</div>`;
-    if (!social.friends.length) return `<div class="empty">No friends yet. Search for someone above.</div>`;
+    if (social.friendsError) return `<div class="empty social-error">Could not load friends — <code>${escapeHtml(social.friendsError)}</code><br><button class="ghost-btn small-btn" style="margin-top:8px;" data-action="reload-social">Reload</button></div>`;
+    if (!social.friends.length) return `<div class="empty">No friends yet. Send a request above.</div>`;
     return social.friends.map((item) => renderFriendRow(item, myXp)).join("");
   })();
 
-  const pendingHtml = (() => {
-    if (!social || (!social.incoming.length && !social.outgoing.length)) return "";
-    const incoming = social.incoming.map(renderIncomingRequest).join("");
-    const outgoing = social.outgoing.map(renderOutgoingRequest).join("");
-    return `
-      <section class="panel" style="margin-top:16px;">
-        <div class="panel-head"><div><h3 class="panel-title">Requests</h3></div></div>
-        ${incoming}${outgoing}
-      </section>
-    `;
-  })();
+  // Pending requests always render independently of friends load state
+  const hasIncoming = social?.incoming?.length > 0;
+  const hasOutgoing = social?.outgoing?.length > 0;
+  const pendingHtml = (hasIncoming || hasOutgoing) ? `
+    <section class="panel" style="margin-top:16px;">
+      <div class="panel-head"><div><h3 class="panel-title">Requests</h3></div></div>
+      ${hasIncoming ? social.incoming.map(renderIncomingRequest).join("") : ""}
+      ${hasOutgoing ? social.outgoing.map(renderOutgoingRequest).join("") : ""}
+    </section>
+  ` : "";
 
   return `
     ${pageHeader("Social", "Friends & accountability")}
@@ -3451,6 +3451,7 @@ function renderSocial(user) {
     <section class="panel" style="margin-top:16px;">
       <div class="panel-head">
         <div><h3 class="panel-title">Friends</h3><p class="panel-note">XP gained since connecting.</p></div>
+        <button class="ghost-btn small-btn" data-action="reload-social">Reload</button>
       </div>
       ${friendsHtml}
     </section>
@@ -3612,55 +3613,70 @@ function renderOutgoingRequest(item) {
 
 async function loadSocialData() {
   if (!currentUser) return;
-  runtime.social = { friends: [], incoming: [], outgoing: [], searchResults: [], loading: true, error: null };
+  const prevSearchResults = runtime.social?.searchResults || [];
+  runtime.social = { friends: [], incoming: [], outgoing: [], searchResults: prevSearchResults, loading: true, friendsError: null };
   render();
-  try {
-    // Load all friendships involving this user
-    const { data: friendships, error: fErr } = await _db
-      .from("friendships")
-      .select("*")
-      .or(`requester_id.eq.${currentUser.id},addressee_id.eq.${currentUser.id}`);
-    if (fErr) throw fErr;
 
-    const myId = currentUser.id;
-    const accepted   = (friendships || []).filter((f) => f.status === "accepted");
-    const incoming   = (friendships || []).filter((f) => f.status === "pending" && f.addressee_id === myId);
-    const outgoing   = (friendships || []).filter((f) => f.status === "pending" && f.requester_id === myId);
+  const myId = currentUser.id;
 
-    // Collect all unique friend/requester/addressee IDs we need profiles for
-    const profileIds = [...new Set([
-      ...accepted.map((f) => f.requester_id === myId ? f.addressee_id : f.requester_id),
-      ...incoming.map((f) => f.requester_id),
-      ...outgoing.map((f) => f.addressee_id),
-    ])];
+  // Use two separate queries instead of .or() — more reliable across PostgREST versions
+  const [sentRes, receivedRes] = await Promise.all([
+    _db.from("friendships").select("*").eq("requester_id", myId),
+    _db.from("friendships").select("*").eq("addressee_id", myId),
+  ]);
 
-    let profileMap = {};
-    if (profileIds.length) {
-      const { data: profiles, error: pErr } = await _db
-        .from("profiles")
-        .select("id, display_name, username, xp, level, overall_performance, active_habits_count, challenge_xp, season_xp")
-        .in("id", profileIds);
-      if (pErr) throw pErr;
-      (profiles || []).forEach((p) => { profileMap[p.id] = p; });
-    }
+  if (sentRes.error) console.warn("Friendships (sent) load failed:", sentRes.error.message);
+  if (receivedRes.error) console.warn("Friendships (received) load failed:", receivedRes.error.message);
 
-    runtime.social = {
-      loading: false,
-      error: null,
-      searchResults: runtime.social.searchResults || [],
-      friends: accepted.map((f) => ({
-        friendship: f,
-        profile: profileMap[f.requester_id === myId ? f.addressee_id : f.requester_id] || {},
-      })),
-      incoming: incoming.map((f) => ({ friendship: f, profile: profileMap[f.requester_id] || {} })),
-      outgoing: outgoing.map((f) => ({ friendship: f, profile: profileMap[f.addressee_id] || {} })),
-    };
+  const sent     = sentRes.data || [];
+  const received = receivedRes.data || [];
+  const all      = [...sent, ...received];
 
-    // Subscribe to real-time profile updates for friends
-    subscribeToFriendProfiles(profileIds);
-  } catch (err) {
-    runtime.social = { friends: [], incoming: [], outgoing: [], searchResults: [], loading: false, error: err.message };
+  const accepted = all.filter((f) => f.status === "accepted");
+  const incoming = received.filter((f) => f.status === "pending");
+  const outgoing = sent.filter((f) => f.status === "pending");
+
+  // Update pending requests immediately so the UI shows them even if profiles fail
+  runtime.social = {
+    loading: false,
+    friendsError: (sentRes.error && receivedRes.error) ? sentRes.error.message : null,
+    searchResults: prevSearchResults,
+    friends: [],
+    incoming: incoming.map((f) => ({ friendship: f, profile: {} })),
+    outgoing: outgoing.map((f) => ({ friendship: f, profile: {} })),
+  };
+  render(); // show requests immediately
+
+  // Now load profiles for everyone we found
+  const profileIds = [...new Set([
+    ...accepted.map((f) => f.requester_id === myId ? f.addressee_id : f.requester_id),
+    ...incoming.map((f) => f.requester_id),
+    ...outgoing.map((f) => f.addressee_id),
+  ])];
+
+  let profileMap = {};
+  if (profileIds.length) {
+    const { data: profiles, error: pErr } = await _db
+      .from("profiles")
+      .select("id, display_name, username, xp, level, overall_performance, active_habits_count, challenge_xp, season_xp")
+      .in("id", profileIds);
+    if (pErr) console.warn("Profiles load failed:", pErr.message);
+    (profiles || []).forEach((p) => { profileMap[p.id] = p; });
   }
+
+  runtime.social = {
+    loading: false,
+    friendsError: runtime.social.friendsError,
+    searchResults: runtime.social.searchResults,
+    friends: accepted.map((f) => ({
+      friendship: f,
+      profile: profileMap[f.requester_id === myId ? f.addressee_id : f.requester_id] || {},
+    })),
+    incoming: incoming.map((f) => ({ friendship: f, profile: profileMap[f.requester_id] || {} })),
+    outgoing: outgoing.map((f) => ({ friendship: f, profile: profileMap[f.addressee_id] || {} })),
+  };
+
+  subscribeToFriendProfiles(profileIds);
   render();
 }
 
