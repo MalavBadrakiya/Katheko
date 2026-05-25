@@ -429,7 +429,7 @@ textarea:focus-visible {
 }
 
 .panel:nth-of-type(3n + 1) {
-  background: #fff3c9;
+  background: var(--coral-soft);
 }
 
 .panel:nth-of-type(3n + 2) {

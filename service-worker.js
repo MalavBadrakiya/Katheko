@@ -1,4 +1,4 @@
-const CACHE_NAME = "katheko-webapp-v28";
+const CACHE_NAME = "katheko-webapp-v29";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./assets/katheko-logo.png"];
 
 self.addEventListener("install", (event) => {

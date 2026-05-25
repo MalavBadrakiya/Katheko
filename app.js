@@ -447,17 +447,22 @@ function renderDashboard(user, season) {
   const habits = activeHabits(season);
   const loops = activeLoops(season);
   const metrics = seasonMetrics(season);
-  const longest = longestSeasonStreak(habits, season);
   const xp = xpSummary(season);
+  const todayWeekday = new Intl.DateTimeFormat("en-GB", { weekday: "long" }).format(new Date());
+  const todayDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" }).format(new Date());
   return `
     ${pageHeader("Home", seasonSubtitle(season, metrics))}
     <section class="panel season-progress-panel" style="margin-top: 16px;">
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Season completed</h3>
-          <p class="panel-note">${seasonProgress(season)}% complete - ${metrics.daysLeft} day${metrics.daysLeft === 1 ? "" : "s"} left in this 12-week season.</p>
+          <p class="panel-note">${seasonProgress(season)}% complete — ${metrics.daysLeft} day${metrics.daysLeft === 1 ? "" : "s"} left in this 12-week season.</p>
         </div>
-        <span class="chip blue">${longest.weeks} week${longest.weeks === 1 ? "" : "s"} best streak</span>
+        <div style="text-align:right;">
+          <div style="font-size:0.68rem;font-weight:900;text-transform:uppercase;color:var(--muted);letter-spacing:0.04em;">Today</div>
+          <div style="font-family:var(--display-font);font-size:1.25rem;font-weight:900;line-height:1;">${todayWeekday}</div>
+          <div style="font-size:0.84rem;font-weight:750;color:var(--muted);margin-top:2px;">${todayDate}</div>
+        </div>
       </div>
       <div class="xp-meter"><span style="width:${seasonProgress(season)}%"></span></div>
     </section>
