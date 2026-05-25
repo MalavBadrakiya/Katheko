@@ -382,13 +382,13 @@ function render() {
           <div class="mobile-nav">
             <button class="${ui.view === "dashboard" ? "active" : ""}" data-action="view" data-view="dashboard" aria-label="Home">Home</button>
             <button class="${ui.view === "analytics" ? "active" : ""}" data-action="view" data-view="analytics" aria-label="Analytics">Analytics</button>
-            <button class="nav-plus ${["habits", "loops"].includes(ui.view) ? "active" : ""}" data-action="toggle-mobile-more" aria-label="Open habits and loops">+</button>
+            <button class="nav-plus ${["habits", "loops", "reflection"].includes(ui.view) ? "active" : ""}" data-action="toggle-mobile-more" aria-label="Open habits, loops, and reflections">+</button>
             <button class="${ui.view === "coach" ? "active" : ""}" data-action="view" data-view="coach" aria-label="Coach">Coach</button>
             <button class="${ui.view === "profile" ? "active" : ""}" data-action="view" data-view="profile" aria-label="Profile">Profile</button>
           </div>
           ${
             ui.mobileMoreOpen
-              ? `<div class="mobile-more-menu"><button data-action="view" data-view="habits">Habits</button><button data-action="view" data-view="loops">Loops</button></div>`
+              ? `<div class="mobile-more-menu"><button data-action="view" data-view="habits">Habits</button><button data-action="view" data-view="loops">Loops</button><button data-action="view" data-view="reflection">Reflections</button></div>`
               : ""
           }
         </nav>
@@ -403,6 +403,7 @@ function render() {
 function renderCurrentView(user, season) {
   if (ui.view === "habits") return renderHabits(user, season);
   if (ui.view === "loops") return renderLoops(user, season);
+  if (ui.view === "reflection") return renderReflection(user, season);
   if (ui.view === "analytics") return renderAnalytics(user, season);
   if (ui.view === "profile") return renderProfile(user, season);
   if (ui.view === "coach") return renderCoach(user, season);
@@ -451,17 +452,12 @@ function renderDashboard(user, season) {
   const todayWeekday = new Intl.DateTimeFormat("en-GB", { weekday: "long" }).format(new Date());
   const todayDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric" }).format(new Date());
   return `
-    ${pageHeader("Home", seasonSubtitle(season, metrics))}
+    ${pageHeader("Home", seasonSubtitle(season, todayWeekday, todayDate))}
     <section class="panel season-progress-panel" style="margin-top: 16px;">
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Season completed</h3>
-          <p class="panel-note">${seasonProgress(season)}% complete — ${metrics.daysLeft} day${metrics.daysLeft === 1 ? "" : "s"} left in this 12-week season.</p>
-        </div>
-        <div style="text-align:right;">
-          <div style="font-size:0.68rem;font-weight:900;text-transform:uppercase;color:var(--muted);letter-spacing:0.04em;">Today</div>
-          <div style="font-family:var(--display-font);font-size:1.25rem;font-weight:900;line-height:1;">${todayWeekday}</div>
-          <div style="font-size:0.84rem;font-weight:750;color:var(--muted);margin-top:2px;">${todayDate}</div>
+          <p class="panel-note">${seasonProgress(season)}% complete — ${metrics.daysLeft} day${metrics.daysLeft === 1 ? "" : "s"} left.</p>
         </div>
       </div>
       <div class="xp-meter"><span style="width:${seasonProgress(season)}%"></span></div>
@@ -470,14 +466,13 @@ function renderDashboard(user, season) {
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Season map</h3>
-          <p class="panel-note">12 weeks, anchored to the chosen start date.</p>
         </div>
-        <span class="chip amber">${formatDate(season.startDate)} - ${formatDate(season.endDate)}</span>
+        <span class="chip blue">${formatDate(season.startDate)} - ${formatDate(season.endDate)}</span>
       </div>
       <div class="season-strip">${renderSeasonWeeks(season)}</div>
     </section>
     <section class="grid two" style="margin-top: 16px;">
-      <div class="panel">
+      <div class="panel analytics-purple">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Today's habits</h3>
@@ -505,7 +500,7 @@ function renderDashboard(user, season) {
           }
         </div>
       </div>
-      <div class="panel">
+      <div class="panel analytics-purple">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Loops</h3>
@@ -539,8 +534,8 @@ function renderDashboard(user, season) {
   `;
 }
 
-function seasonSubtitle(season, metrics = seasonMetrics(season)) {
-  return `${escapeHtml(season.name)} · ${formatDate(season.startDate)} - ${formatDate(season.endDate)} · ${metrics.daysLeft} day${metrics.daysLeft === 1 ? "" : "s"} remain.`;
+function seasonSubtitle(season, todayWeekday, todayDate) {
+  return `${escapeHtml(season.name)} · ${escapeHtml(todayWeekday)} · ${escapeHtml(todayDate)}`;
 }
 
 function renderHabits(user, season) {
@@ -580,7 +575,7 @@ function renderHabits(user, season) {
         </div>
       </form>
     </section>
-    <section class="panel" style="margin-top:16px;">
+    <section class="panel analytics-purple" style="margin-top:16px;">
       <div class="panel-head">
         <div>
           <h3 class="panel-title">${isCurrentWeek ? "Current week" : `Week ${visibleWeek + 1}`}</h3>
@@ -601,7 +596,7 @@ function renderHabits(user, season) {
       </div>
     </section>
     ${renderHabitGridPanel(active, season)}
-    <section class="panel" style="margin-top:16px;">
+    <section class="panel archive-panel" style="margin-top:16px;">
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Archived</h3>
@@ -760,7 +755,7 @@ function renderLoops(user, season) {
     ${pageHeader("Loops", "Ordered routines that become focused sessions.")}
     ${runtime.session ? renderSessionStage() : ""}
     <section class="grid two" style="${runtime.session ? "margin-top:16px;" : ""}">
-      <div class="panel">
+      <div class="panel loop-create">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Create loop</h3>
@@ -791,7 +786,7 @@ function renderLoops(user, season) {
           </datalist>
         </form>
       </div>
-      <div class="panel">
+      <div class="panel analytics-purple">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Saved loops</h3>
@@ -809,7 +804,7 @@ function renderLoops(user, season) {
         </div>
       </div>
     </section>
-    <section class="panel" style="margin-top:16px;">
+    <section class="panel archive-panel" style="margin-top:16px;">
       <div class="panel-head">
         <div>
           <h3 class="panel-title">Archived</h3>
@@ -938,7 +933,6 @@ function renderAnalytics(user, season) {
   const habits = activeHabits(season);
   const loops = activeLoops(season);
   const xp = xpSummary(season);
-  const insight = coachInsight(season);
   const selectedLoop = loops.find((loop) => loop.id === ui.analyticsLoopId) || loops[0];
   if (!ui.analyticsLoopId && selectedLoop) ui.analyticsLoopId = selectedLoop.id;
   persistUi();
@@ -951,32 +945,19 @@ function renderAnalytics(user, season) {
       `<button class="quiet-btn" data-action="export-csv">Export CSV</button><button class="quiet-btn" data-action="export-json">Export JSON</button>`,
 	    )}
 		    <section class="grid four">
-		      ${metricCard("Habit success", `${metrics.averageHabitRate}%`, "Average weekly-target success across active habits.", "analytics-habit-success")}
-		      ${metricCard("Overall performance", `${overallPerformance(season)}%`, `Blended score from season progress, habits, loops, and challenge activity. Band: ${performanceBandLabel(overallPerformance(season))}.`, "analytics-overall-performance")}
-		      ${metricCard("Challenge XP gained", `${xp.challenge}`, "XP earned from completed tracked challenge rewards.", "analytics-challenge-xp")}
-		      ${metricCard("Best weekly streak", `${bestStreak.weeks}`, `Longest weekly-target streak. Current leader: ${bestStreak.habitTitle}.`, "analytics-best-streak")}
+		      ${metricCard("Habit success", `${metrics.averageHabitRate}%`, "Average weekly-target success across active habits.", "analytics-habit-success", "blue")}
+		      ${metricCard("Overall performance", `${overallPerformance(season)}%`, `Blended score from season progress, habits, loops, and challenge activity. Band: ${performanceBandLabel(overallPerformance(season))}.`, "analytics-overall-performance", "blue")}
+		      ${metricCard("Challenge XP gained", `${xp.challenge}`, "XP earned from completed tracked challenge rewards.", "analytics-challenge-xp", "blue")}
+		      ${metricCard("Best weekly streak", `${bestStreak.weeks}`, `Longest weekly-target streak. Current leader: ${bestStreak.habitTitle}.`, "analytics-best-streak", "blue")}
 		    </section>
 		    <section class="grid four secondary-metrics" style="margin-top:16px;">
 		      ${metricCard("Progress engine", `Level ${xp.level}`, `${xp.total} lifetime XP. ${xp.toNext} XP needed to reach level ${xp.level + 1}.`, "dashboard-progress-engine", "blue")}
-		      ${metricCard("Lifetime XP", `${xp.total}`, "Total XP earned across all seasons in this account.", "dashboard-lifetime-xp")}
-		      ${metricCard("Season XP", `${xp.season}`, "XP earned inside the active 12-week season.", "dashboard-season-xp")}
-		      ${metricCard("Weekly target", `${metrics.weeklyScore}%`, "Share of this week's active habit and loop targets completed.", "dashboard-weekly-target")}
+		      ${metricCard("Lifetime XP", `${xp.total}`, "Total XP earned across all seasons in this account.", "dashboard-lifetime-xp", "blue")}
+		      ${metricCard("Season XP", `${xp.season}`, "XP earned inside the active 12-week season.", "dashboard-season-xp", "blue")}
+		      ${metricCard("Weekly target", `${metrics.weeklyScore}%`, "Share of this week's active habit and loop targets completed.", "dashboard-weekly-target", "blue")}
 		    </section>
-		    <section class="insights-grid" style="margin-top:16px;">
-      <div class="panel overview-panel">
-        <div class="panel-head">
-          <div>
-            <h3 class="panel-title">Detailed Analysis</h3>
-            <p class="panel-note">Generated from current season data.</p>
-          </div>
-        </div>
-        <div class="event-list">
-          ${insight.map((line) => `<div class="row"><div><p class="row-title">${escapeHtml(line.title)}</p><p class="row-meta">${escapeHtml(line.body)}</p></div></div>`).join("")}
-        </div>
-      </div>
-	    </section>
     <section class="grid" style="margin-top:16px;">
-      <div class="panel">
+      <div class="panel analytics-purple">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Habit performance</h3>
@@ -1014,7 +995,7 @@ function renderAnalytics(user, season) {
       </div>
     </section>
     <section class="grid two" style="margin-top:16px;">
-      <div class="panel flush">
+      <div class="panel flush analytics-purple">
         <table class="table">
           <thead>
             <tr>
@@ -1047,7 +1028,7 @@ function renderAnalytics(user, season) {
           </tbody>
         </table>
       </div>
-      <div class="panel flush">
+      <div class="panel flush analytics-purple">
         <table class="table">
           <thead>
             <tr>
@@ -1101,7 +1082,7 @@ function renderChallenges(user, season) {
       ${metricCard("Challenge XP gained", `${xp.challenge}`, "Completed challenge rewards")}
     </section>
     <section class="grid two" style="margin-top:16px;">
-      <div class="panel">
+      <div class="panel challenge-panel">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Recovery</h3>
@@ -1112,7 +1093,7 @@ function renderChallenges(user, season) {
           ${recovery.length ? recovery.map(renderChallengeSuggestion).join("") : `<div class="empty">No recovery challenges right now.</div>`}
         </div>
       </div>
-      <div class="panel">
+      <div class="panel challenge-panel">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Bonus</h3>
@@ -1206,7 +1187,7 @@ function renderProfile(user, season) {
       `<button class="quiet-btn" data-action="enable-notifications">Enable notifications</button><button class="quiet-btn" data-action="export-knowledge">Export knowledge base</button><button class="quiet-btn" data-action="export-csv">Export CSV</button><button class="quiet-btn" data-action="export-json">Export JSON</button>`,
     )}
     <section class="grid two">
-      <div class="panel">
+      <div class="panel profile-account">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Account</h3>
@@ -1227,7 +1208,7 @@ function renderProfile(user, season) {
         </div>
         <div class="xp-meter"><span style="width:${xp.nextProgress}%"></span></div>
       </div>
-      <div class="panel">
+      <div class="panel profile-season-create">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Create season</h3>
@@ -1250,7 +1231,7 @@ function renderProfile(user, season) {
       </div>
     </section>
     <section class="grid ${summary ? "two" : ""}" style="margin-top:16px;">
-      <div class="panel">
+      <div class="panel profile-seasons">
         <div class="panel-head">
           <div>
             <h3 class="panel-title">Seasons</h3>
@@ -1324,20 +1305,15 @@ function renderProfile(user, season) {
 }
 
 function renderCoach(user, season) {
-  const noteOptions = knowledgeTagOptions(season);
-  const filterOptions = knowledgeFilterOptions(season);
-  const visibleNotes = filteredNotes(season);
-  const allNotesCount = userNotes().length;
-  const isAllFilter = ui.noteFilter === "all";
-  const shownNotes = isAllFilter && !ui.notesExpanded ? visibleNotes.slice(0, 5) : visibleNotes;
   const suggestions = challengeSuggestions(season);
   const recovery = suggestions.filter((challenge) => challenge.category === "recovery");
   const bonus = suggestions.filter((challenge) => challenge.category === "bonus");
   const activeChallenges = userChallengeAttempts()
     .filter((attempt) => attempt.seasonId === season.id && attempt.status === "active")
     .sort((a, b) => parseISO(b.updatedAt || b.startedAt) - parseISO(a.updatedAt || a.startedAt));
+  const insight = coachInsight(season);
   return `
-    ${pageHeader("Coach", "Challenges, notes, and reflection capture.")}
+    ${pageHeader("Coach", "Challenges and active objectives.")}
     <section class="grid two">
       <div class="panel challenge-panel">
         <div class="panel-head">
@@ -1373,11 +1349,36 @@ function renderCoach(user, season) {
         ${activeChallenges.length ? activeChallenges.map(renderChallengeAttempt).join("") : `<div class="empty">Start a quest when you want an extra push.</div>`}
       </div>
     </section>
-    <section class="panel" style="margin-top:16px;">
+    <section class="insights-grid" style="margin-top:16px;">
+      <div class="panel overview-panel">
+        <div class="panel-head">
+          <div>
+            <h3 class="panel-title">Detailed Analysis</h3>
+            <p class="panel-note">Generated from current season data.</p>
+          </div>
+        </div>
+        <div class="event-list">
+          ${insight.map((line) => `<div class="row"><div><p class="row-title">${escapeHtml(line.title)}</p><p class="row-meta">${escapeHtml(line.body)}</p></div></div>`).join("")}
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderReflection(user, season) {
+  const noteOptions = knowledgeTagOptions(season);
+  const filterOptions = knowledgeFilterOptions(season);
+  const visibleNotes = filteredNotes(season);
+  const allNotesCount = userNotes().length;
+  const isAllFilter = ui.noteFilter === "all";
+  const shownNotes = isAllFilter && !ui.notesExpanded ? visibleNotes.slice(0, 5) : visibleNotes;
+  return `
+    ${pageHeader("Reflection", "Notes, records, and decision capture.")}
+    <section class="panel reflection-note" style="margin-top:16px;">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Knowledge Base</h3>
-          <p class="panel-note">Personal rules, frameworks, and reminders.</p>
+          <h3 class="panel-title">New note</h3>
+          <p class="panel-note">Reflection of action, events and concequences.</p>
         </div>
       </div>
       <form data-form="add-note" class="grid">
@@ -1400,10 +1401,10 @@ function renderCoach(user, season) {
         <button class="primary-btn" type="submit">Save note</button>
       </form>
     </section>
-    <section class="panel" style="margin-top:16px;">
+    <section class="panel reflection-base" style="margin-top:16px;">
       <div class="panel-head">
         <div>
-          <h3 class="panel-title">Reflections</h3>
+          <h3 class="panel-title">Knowledge base</h3>
           <p class="panel-note">${allNotesCount} knowledge item${allNotesCount === 1 ? "" : "s"}.</p>
         </div>
         <div class="note-tools">

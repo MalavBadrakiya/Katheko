@@ -269,6 +269,7 @@ textarea:focus-visible {
 .nav {
   display: grid;
   gap: 8px;
+  position: relative;
 }
 
 .desktop-nav {
@@ -452,10 +453,59 @@ textarea:focus-visible {
   background: var(--paper-strong);
 }
 
+.panel.archive-panel {
+  background: var(--paper-strong);
+}
+
+.panel.analytics-purple {
+  background: var(--pink);
+}
+
+.panel.home-neutral {
+  background: var(--paper-strong);
+}
+
+.panel.loop-create {
+  background: var(--coral-soft);
+}
+
+.panel.reflection-note {
+  background: var(--coral-soft);
+}
+
+.panel.reflection-base {
+  background: var(--pink);
+}
+
+.panel.profile-season-create {
+  background: var(--coral-soft);
+}
+
+.panel.profile-seasons {
+  background: var(--pink);
+}
+
+.panel.profile-account {
+  background: var(--pink);
+}
+
 .panel.flush {
   padding: 0;
   overflow: hidden;
   background: var(--paper-strong);
+}
+
+.panel.flush.analytics-purple {
+  background: var(--pink);
+}
+
+.panel.flush.analytics-purple .table {
+  background: transparent;
+}
+
+.panel.flush.analytics-purple .table th,
+.panel.flush.analytics-purple .table td {
+  background: transparent;
 }
 
 .panel-head {
@@ -1130,7 +1180,7 @@ textarea:focus-visible {
 }
 
 .panel.season-progress-panel {
-  background: var(--amber-soft);
+  background: var(--blue-soft);
 }
 
 .xp-meter {
@@ -1279,7 +1329,8 @@ textarea:focus-visible {
 
   .mobile-more-menu {
     position: absolute;
-    right: 39%;
+    left: 50%;
+    right: auto;
     bottom: calc(100% + 10px);
     z-index: 35;
     display: grid;
@@ -1291,6 +1342,7 @@ textarea:focus-visible {
     border-radius: var(--radius);
     background: var(--paper-strong);
     box-shadow: var(--shadow-small);
+    transform: translateX(-50%);
   }
 
   .nav-profile {
@@ -1501,7 +1553,8 @@ textarea:focus-visible {
   }
 
   .mobile-more-menu {
-    right: 35%;
+    left: 50%;
+    right: auto;
     width: min(190px, 48vw);
   }
 
