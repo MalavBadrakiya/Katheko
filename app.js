@@ -7,6 +7,7 @@ const views = [
   ["habits", "Habits"],
   ["loops", "Loops"],
   ["analytics", "Analytics"],
+  ["reflection", "Reflections"],
   ["coach", "Coach"],
   ["social", "Social"],
   ["profile", "Profile"],
@@ -39,6 +40,7 @@ let runtime     = {
   challengeRefreshDate: todayISO(),
   wakeLock: null,
   social: null,          // { friends: [], pending: [], searchResults: [], loading: false, error: null, realtimeSub: null }
+  persistChain: Promise.resolve(),
   installPrompt: null,   // BeforeInstallPromptEvent, captured for PWA install
 };
 
@@ -123,8 +125,9 @@ document.addEventListener("click", (event) => {
   if (action === "pause-session") pauseSession();
   if (action === "resume-session") resumeSession();
   if (action === "next-step") finishStep();
-  if (action === "abandon-session") completeSession(false);
+  if (action === "abandon-session") abandonSession();
   if (action === "discard-session") discardSession();
+  if (action === "delete-session") deleteSession(button.dataset.sessionId);
   if (action === "remove-loop") archiveLoop(button.dataset.loopId);
   if (action === "restore-loop") archiveLoop(button.dataset.loopId, false);
   if (action === "delete-loop") deleteLoop(button.dataset.loopId);
@@ -146,6 +149,7 @@ document.addEventListener("click", (event) => {
   if (action === "select-loop-analytics") selectAnalyticsLoop(button.dataset.loopId);
   if (action === "start-challenge") startChallenge(button.dataset.challengeId);
   if (action === "drop-challenge") dropChallenge(button.dataset.challengeAttemptId);
+  if (action === "delete-challenge-attempt") deleteChallengeAttempt(button.dataset.challengeAttemptId);
   // PWA install
   if (action === "install-pwa") triggerPwaInstall();
   if (action === "dismiss-install-prompt") dismissInstallPrompt();
@@ -388,10 +392,11 @@ function event(userId, seasonId, type, label, at = nowIso()) {
 function persist() {
   if (!currentUser || !state) return;
   recomputeXpAchievements();
-  // Fire-and-forget — UI updates optimistically; save happens in background.
-  _db.from("user_state")
-    .upsert({ user_id: currentUser.id, data: state, updated_at: new Date().toISOString() },
-            { onConflict: "user_id" })
+  runtime.persistChain = runtime.persistChain
+    .catch(() => {})
+    .then(() => _db.from("user_state")
+      .upsert({ user_id: currentUser.id, data: state, updated_at: new Date().toISOString() },
+              { onConflict: "user_id" }))
     .then(({ error }) => { if (error) toast("Save failed — check connection"); });
 }
 
@@ -1129,6 +1134,7 @@ function renderAnalytics(user, season) {
               <th>${selectedLoop ? escapeHtml(selectedLoop.title) : "Loop"} history</th>
               <th>Duration</th>
               <th>Status</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -1141,16 +1147,18 @@ function renderAnalytics(user, season) {
                           <td>${formatDateTime(session.startedAt)}</td>
                           <td>${formatDuration(Math.round(session.durationSeconds / 60))}</td>
                           <td>${session.completed ? `<span class="chip">Completed</span>` : `<span class="chip coral">Broken</span>`}</td>
+                          <td><button class="quiet-btn small-btn" data-action="delete-session" data-session-id="${escapeAttr(session.id)}">Delete</button></td>
                         </tr>
                       `,
                     )
-                    .join("") || `<tr><td colspan="3">No runs for this loop yet.</td></tr>`
-                : `<tr><td colspan="3">Select a loop to inspect its run history.</td></tr>`
+                    .join("") || `<tr><td colspan="4">No runs for this loop yet.</td></tr>`
+                : `<tr><td colspan="4">Select a loop to inspect its run history.</td></tr>`
             }
           </tbody>
         </table>
       </div>
     </section>
+    ${renderDetailedAnalysis(season)}
   `;
 }
 
@@ -1260,7 +1268,7 @@ function renderChallengeAttempt(attempt) {
       ${
         attempt.status === "active"
           ? `<button class="quiet-btn" data-action="drop-challenge" data-challenge-attempt-id="${attempt.id}">Drop</button>`
-          : `<span class="chip neutral">${formatDateTime(attempt.completedAt || attempt.droppedAt || attempt.expiredAt || attempt.updatedAt)}</span>`
+          : `<div class="friend-row-right"><span class="chip neutral">${formatDateTime(attempt.completedAt || attempt.droppedAt || attempt.expiredAt || attempt.updatedAt)}</span><button class="quiet-btn small-btn" data-action="delete-challenge-attempt" data-challenge-attempt-id="${escapeAttr(attempt.id)}">Delete</button></div>`
       }
     </div>
   `;
@@ -1429,10 +1437,6 @@ function renderCoach(user, season) {
   const activeChallenges = userChallengeAttempts()
     .filter((attempt) => attempt.seasonId === season.id && attempt.status === "active")
     .sort((a, b) => parseISO(b.updatedAt || b.startedAt) - parseISO(a.updatedAt || a.startedAt));
-  const insight = coachInsight(season);
-  const analysisReady = elapsedDays(season) >= 11;
-  const analysisRemaining = Math.max(0, 11 - elapsedDays(season));
-  const analysisWeek = currentWeekIndex(season) + 1;
   return `
     ${pageHeader("Coach", "Challenges and active objectives.")}
     <section class="grid two">
@@ -1470,6 +1474,15 @@ function renderCoach(user, season) {
         ${activeChallenges.length ? activeChallenges.map(renderChallengeAttempt).join("") : `<div class="empty">Start a quest when you want an extra push.</div>`}
       </div>
     </section>
+  `;
+}
+
+function renderDetailedAnalysis(season) {
+  const insight = coachInsight(season);
+  const analysisReady = elapsedDays(season) >= 11;
+  const analysisRemaining = Math.max(0, 11 - elapsedDays(season));
+  const analysisWeek = currentWeekIndex(season) + 1;
+  return `
     <section class="insights-grid" style="margin-top:16px;">
       <div class="panel overview-panel analytics-purple">
         <div class="panel-head">
@@ -1828,6 +1841,18 @@ function deleteLoop(loopId) {
   render();
 }
 
+function deleteSession(sessionId) {
+  const session = state.sessions.find((item) => item.id === sessionId && item.userId === state.activeUserId);
+  if (!session) return;
+  if (!confirm(`Delete this ${session.completed ? "completed" : "broken"} routine history entry? This cannot be undone.`)) return;
+  state.sessions = state.sessions.filter((item) => item.id !== session.id);
+  state.events.push(event(session.userId, session.seasonId, "session", `Deleted ${session.loopTitle} history entry`, nowIso()));
+  evaluateAllActiveChallenges();
+  persist();
+  toast("Routine history entry deleted.");
+  render();
+}
+
 function addStepEditorRow(targetId = "step-editor-create") {
   const safeId = targetId || "step-editor-create";
   document.getElementById(safeId)?.insertAdjacentHTML("beforeend", stepEditorRow("New step", 5));
@@ -1849,20 +1874,8 @@ function startSession(loopId) {
     runSteps: [],
     beeped: new Set(),
   };
-  // Persist active session to Supabase so timer survives app closure
-  state.activeFocusSession = {
-    id: runtime.session.id,
-    loopId: loop.id,
-    loopTitle: loop.title,
-    steps: loop.steps.map((s) => ({ title: s.title, durationSeconds: s.minutes * 60 })),
-    startedAt: now.toISOString(),
-    stepIndex: 0,
-    stepStartedAt: now.toISOString(),
-    paused: false,
-    pausedAt: null,
-    totalPausedSeconds: 0,
-    seasonId: activeSeason()?.id || "",
-  };
+  state.activeFocusSession = activeFocusPayload(runtime.session, now);
+  state.activeFocusSession.totalPausedSeconds = 0;
   persist();
   acquireWakeLock();
   sendNotification("Kathēkõ session started", `${loop.title}: ${loop.steps[0].title}`);
@@ -1875,7 +1888,8 @@ function startSession(loopId) {
 function tickSession() {
   const session = runtime.session;
   if (!session || !session.running) return;
-  session.remaining -= 1;
+  syncRuntimeSessionFromClock();
+  if (!runtime.session) return;
 
   if (session.remaining > 0 && session.remaining <= 10 && !session.beeped.has(session.remaining)) {
     session.beeped.add(session.remaining);
@@ -1895,6 +1909,8 @@ function tickSession() {
 
 function pauseSession() {
   if (!runtime.session) return;
+  syncRuntimeSessionFromClock({ notify: false });
+  if (!runtime.session) return;
   runtime.session.running = false;
   releaseWakeLock();
   if (state.activeFocusSession) {
@@ -1911,12 +1927,18 @@ function resumeSession() {
   runtime.session.running = true;
   acquireWakeLock();
   if (state.activeFocusSession && state.activeFocusSession.pausedAt) {
-    const pausedSeconds = Math.round((new Date() - new Date(state.activeFocusSession.pausedAt)) / 1000);
+    const now = new Date();
+    const pausedSeconds = Math.max(0, Math.round((now - new Date(state.activeFocusSession.pausedAt)) / 1000));
+    runtime.session.stepStartedAt = new Date(runtime.session.stepStartedAt.getTime() + pausedSeconds * 1000);
     state.activeFocusSession.totalPausedSeconds = (state.activeFocusSession.totalPausedSeconds || 0) + pausedSeconds;
+    state.activeFocusSession.stepStartedAt = runtime.session.stepStartedAt.toISOString();
     state.activeFocusSession.paused = false;
     state.activeFocusSession.pausedAt = null;
+    state.activeFocusSession.updatedAt = now.toISOString();
     persist();
   }
+  if (runtime.ticker) clearInterval(runtime.ticker);
+  runtime.ticker = setInterval(tickSession, 1000);
   toast("Session resumed.");
   render();
 }
@@ -1926,10 +1948,11 @@ function finishStep() {
   if (!session) return;
   const step = session.loop.steps[session.stepIndex];
   const intended = step.minutes * 60;
+  const actualSeconds = clamp(Math.round((new Date() - session.stepStartedAt) / 1000), 0, intended);
   session.runSteps.push({
     title: step.title,
     intendedSeconds: intended,
-    actualSeconds: clamp(intended - session.remaining, 0, intended),
+    actualSeconds,
     completed: true,
   });
   playBuzzer();
@@ -1942,23 +1965,20 @@ function finishStep() {
   session.remaining = next.minutes * 60;
   session.stepStartedAt = new Date();
   session.beeped = new Set();
-  // Keep server-side session in sync with step progress
-  if (state.activeFocusSession) {
-    state.activeFocusSession.stepIndex = session.stepIndex;
-    state.activeFocusSession.stepStartedAt = session.stepStartedAt.toISOString();
-    persist();
-  }
+  state.activeFocusSession = activeFocusPayload(session);
+  persist();
   sendNotification("Next Kathēkõ step", next.title);
   notifyCountdown(true);
   render();
 }
 
-function completeSession(completed) {
+function completeSession(completed, options = {}) {
   const session = runtime.session;
   if (!session) return;
   const season = activeSeason();
-  const endedAt = new Date();
-  const durationSeconds = Math.max(1, Math.round((endedAt - session.startedAt) / 1000));
+  const endedAt = options.endedAt ? new Date(options.endedAt) : new Date();
+  const totalPausedSeconds = state.activeFocusSession?.totalPausedSeconds || 0;
+  const durationSeconds = Math.max(1, Math.round((endedAt - session.startedAt) / 1000) - totalPausedSeconds);
   const savedSession = {
     id: uid("session"),
     userId: state.activeUserId,
@@ -1986,6 +2006,44 @@ function completeSession(completed) {
   sendNotification("Kathēkõ session ended", completed ? "Loop completed." : "Loop abandoned.");
   toast(completed ? "Loop completed." : "Loop abandoned.");
   render();
+}
+
+async function abandonSession() {
+  const session = runtime.session;
+  if (!session) return;
+  const remote = await latestRemoteState();
+  const matchingRemoteSession = remote?.sessions?.find((item) =>
+    item.userId === state.activeUserId &&
+    item.loopId === session.loop.id &&
+    item.startedAt === session.startedAt.toISOString() &&
+    item.completed
+  );
+  if (matchingRemoteSession && !remote.activeFocusSession) {
+    state = normaliseState(remote);
+    releaseWakeLock();
+    if (runtime.ticker) clearInterval(runtime.ticker);
+    runtime.session = null;
+    runtime.ticker = null;
+    document.title = "Kathēkõ";
+    toast("Loop was already completed on another device.");
+    render();
+    return;
+  }
+  completeSession(false);
+}
+
+async function latestRemoteState() {
+  if (!currentUser) return null;
+  const { data, error } = await _db
+    .from("user_state")
+    .select("data")
+    .eq("user_id", currentUser.id)
+    .maybeSingle();
+  if (error) {
+    console.warn("Remote state check failed:", error.message);
+    return null;
+  }
+  return data?.data || null;
 }
 
 function discardSession() {
@@ -2037,54 +2095,33 @@ function checkResumableSession() {
     return;
   }
 
-  const now = new Date();
-  const startedAt = new Date(saved.startedAt);
-  const totalPausedSeconds = saved.totalPausedSeconds || 0;
-  // If still paused at last save, count the additional paused time
-  const currentExtraPaused = saved.paused && saved.pausedAt
-    ? Math.round((now - new Date(saved.pausedAt)) / 1000)
-    : 0;
-  const elapsedSeconds = Math.round((now - startedAt) / 1000) - totalPausedSeconds - currentExtraPaused;
-  const totalLoopSeconds = (saved.steps || []).reduce((sum, s) => sum + s.durationSeconds, 0);
+  const restored = restoredFocusPosition(saved, loop, new Date());
 
-  if (elapsedSeconds >= totalLoopSeconds) {
-    // Loop has already finished — prompt for confirmation
-    runtime.pendingResumableSession = { saved, loop };
-    render(); // session resume modal will appear
+  if (restored.finished) {
+    runtime.pendingResumableSession = { saved, loop, completedSteps: restored.completedSteps };
+    render();
   } else {
-    // Loop still in progress — reconstruct session state at correct step
-    let runningElapsed = elapsedSeconds;
-    let stepIndex = 0;
-    let remaining = 0;
-    for (let i = 0; i < (saved.steps || []).length; i++) {
-      if (runningElapsed < saved.steps[i].durationSeconds) {
-        stepIndex = i;
-        remaining = saved.steps[i].durationSeconds - runningElapsed;
-        break;
-      }
-      runningElapsed -= saved.steps[i].durationSeconds;
-      stepIndex = i + 1;
-    }
-    // Clamp in case of rounding edge
-    stepIndex = Math.min(stepIndex, loop.steps.length - 1);
-    remaining = Math.max(1, remaining);
-
     if (runtime.ticker) clearInterval(runtime.ticker);
     runtime.session = {
       id: saved.id,
       loop,
-      stepIndex,
-      remaining,
+      stepIndex: restored.stepIndex,
+      remaining: restored.remaining,
       running: !saved.paused,
-      startedAt,
-      stepStartedAt: new Date(),
-      runSteps: [],
+      startedAt: new Date(saved.startedAt),
+      stepStartedAt: restored.stepStartedAt,
+      runSteps: restored.completedSteps,
       beeped: new Set(),
     };
     if (!saved.paused) {
       acquireWakeLock();
       runtime.ticker = setInterval(tickSession, 1000);
     }
+    state.activeFocusSession = activeFocusPayload(runtime.session);
+    state.activeFocusSession.totalPausedSeconds = saved.totalPausedSeconds || 0;
+    state.activeFocusSession.paused = Boolean(saved.paused);
+    state.activeFocusSession.pausedAt = saved.pausedAt || null;
+    persist();
     toast(`Session resumed: ${loop.title}.`);
     render();
   }
@@ -2095,7 +2132,7 @@ function confirmResumableSession(completed) {
   if (!pending) return;
   runtime.pendingResumableSession = null;
 
-  const { saved, loop } = pending;
+  const { saved, loop, completedSteps = [] } = pending;
   const season = state.seasons.find((s) => s.id === saved.seasonId) || activeSeason();
   if (!season) { state.activeFocusSession = null; persist(); render(); return; }
 
@@ -2108,9 +2145,9 @@ function confirmResumableSession(completed) {
     loopTitle: loop.title,
     startedAt: saved.startedAt,
     endedAt: endedAt.toISOString(),
-    durationSeconds: Math.round((endedAt - new Date(saved.startedAt)) / 1000),
+    durationSeconds: Math.max(1, Math.round((endedAt - new Date(saved.startedAt)) / 1000) - (saved.totalPausedSeconds || 0)),
     completed,
-    steps: [],
+    steps: completedSteps,
   };
   state.sessions.push(savedSession);
   state.events.push(event(state.activeUserId, season.id, "session",
@@ -2137,6 +2174,103 @@ function renderSessionResumeModal() {
       </div>
     </div>
   `;
+}
+
+function activeFocusPayload(session, at = new Date()) {
+  return {
+    id: session.id,
+    loopId: session.loop.id,
+    loopTitle: session.loop.title,
+    steps: session.loop.steps.map((step) => ({ title: step.title, durationSeconds: step.minutes * 60 })),
+    startedAt: session.startedAt.toISOString(),
+    stepIndex: session.stepIndex,
+    stepStartedAt: session.stepStartedAt.toISOString(),
+    paused: !session.running,
+    pausedAt: session.running ? null : at.toISOString(),
+    totalPausedSeconds: state.activeFocusSession?.totalPausedSeconds || 0,
+    seasonId: activeSeason()?.id || session.loop.seasonId || "",
+    updatedAt: at.toISOString(),
+  };
+}
+
+function restoredFocusPosition(saved, loop, now = new Date()) {
+  const savedSteps = saved.steps?.length ? saved.steps : loop.steps.map((step) => ({ title: step.title, durationSeconds: step.minutes * 60 }));
+  let stepIndex = clamp(Number(saved.stepIndex) || 0, 0, Math.max(0, savedSteps.length - 1));
+  let stepStartedAt = new Date(saved.stepStartedAt || saved.startedAt);
+  const referenceTime = saved.paused && saved.pausedAt ? new Date(saved.pausedAt) : now;
+  let elapsed = Math.max(0, Math.floor((referenceTime - stepStartedAt) / 1000));
+  const completedSteps = [];
+
+  while (stepIndex < savedSteps.length && elapsed >= savedSteps[stepIndex].durationSeconds) {
+    const step = savedSteps[stepIndex];
+    completedSteps.push({
+      title: step.title,
+      intendedSeconds: step.durationSeconds,
+      actualSeconds: step.durationSeconds,
+      completed: true,
+    });
+    elapsed -= step.durationSeconds;
+    stepStartedAt = new Date(stepStartedAt.getTime() + step.durationSeconds * 1000);
+    stepIndex += 1;
+  }
+
+  if (stepIndex >= savedSteps.length) {
+    return { finished: true, completedSteps };
+  }
+
+  return {
+    finished: false,
+    stepIndex,
+    stepStartedAt,
+    remaining: Math.max(1, savedSteps[stepIndex].durationSeconds - elapsed),
+    completedSteps,
+  };
+}
+
+function syncRuntimeSessionFromClock({ notify = true } = {}) {
+  const session = runtime.session;
+  if (!session || !session.running) return false;
+  const now = new Date();
+
+  while (runtime.session?.running) {
+    const current = runtime.session;
+    const step = current.loop.steps[current.stepIndex];
+    if (!step) {
+      completeSession(true, { endedAt: now });
+      return true;
+    }
+    const intended = step.minutes * 60;
+    const elapsed = Math.max(0, Math.floor((now - current.stepStartedAt) / 1000));
+    current.remaining = intended - elapsed;
+    if (current.remaining > 0) {
+      state.activeFocusSession = activeFocusPayload(current, now);
+      return false;
+    }
+
+    current.runSteps.push({
+      title: step.title,
+      intendedSeconds: intended,
+      actualSeconds: intended,
+      completed: true,
+    });
+    if (notify) playBuzzer();
+    current.stepIndex += 1;
+    const next = current.loop.steps[current.stepIndex];
+    if (!next) {
+      completeSession(true, { endedAt: now });
+      return true;
+    }
+    current.stepStartedAt = new Date(current.stepStartedAt.getTime() + intended * 1000);
+    current.remaining = next.minutes * 60;
+    current.beeped = new Set();
+    state.activeFocusSession = activeFocusPayload(current, now);
+    persist();
+    if (notify) {
+      sendNotification("Next Kathēkõ step", next.title);
+      notifyCountdown(true);
+    }
+  }
+  return false;
 }
 
 // ── PWA Install Banner ───────────────────────────────────────
@@ -3169,6 +3303,18 @@ function dropChallenge(attemptId) {
   render();
 }
 
+function deleteChallengeAttempt(attemptId) {
+  const attempt = state.challengeAttempts.find((item) => item.id === attemptId && item.userId === state.activeUserId);
+  if (!attempt || attempt.status === "active") return;
+  if (!confirm(`Delete "${attempt.title}" from challenge history? This cannot be undone.`)) return;
+  state.challengeAttempts = state.challengeAttempts.filter((item) => item.id !== attempt.id);
+  state.events.push(event(attempt.userId, attempt.seasonId, "challenge", `Deleted ${attempt.title} history entry`, nowIso()));
+  evaluateAllActiveChallenges();
+  persist();
+  toast("Challenge history entry deleted.");
+  render();
+}
+
 function evaluateAllActiveChallenges() {
   if (!state?.challengeAttempts) return;
   state.challengeAttempts
@@ -3559,9 +3705,13 @@ function renderSocial(user) {
 
   const friendsHtml = (() => {
     if (!social) return `<div class="empty">Loading…</div>`;
-    if (social.friendsError) return `<div class="empty social-error">Could not load friends — <code>${escapeHtml(social.friendsError)}</code><br><button class="ghost-btn small-btn" style="margin-top:8px;" data-action="reload-social">Reload</button></div>`;
-    if (!social.friends.length) return `<div class="empty">No friends yet. Send a request above.</div>`;
-    return social.friends.map((item) => renderFriendRow(item, myXp)).join("");
+    const rows = social.friends.length ? social.friends.map((item) => renderFriendRow(item, myXp)).join("") : "";
+    const loading = social.loading ? `<div class="empty social-loading">Loading friends…</div>` : "";
+    const error = social.friendsError ? `<div class="empty social-error">Could not load friends — <code>${escapeHtml(social.friendsError)}</code><br><button class="ghost-btn small-btn" style="margin-top:8px;" data-action="reload-social">Reload</button></div>` : "";
+    if (rows) return `${loading}${error}${rows}`;
+    if (error) return error;
+    if (loading) return loading;
+    return `<div class="empty">No friends yet. Send a request above.</div>`;
   })();
 
   // Pending requests always render independently of friends load state
@@ -3631,6 +3781,7 @@ function renderSearchResults(social) {
 
 function renderFriendRow(item, myXp) {
   const { friendship, profile } = item;
+  const displayName = friendDisplayName(profile);
   const isRequester = friendship.requester_id === currentUser?.id;
   const myBaseline = isRequester ? (friendship.xp_baseline_requester || 0) : (friendship.xp_baseline_addressee || 0);
   const friendBaseline = isRequester ? (friendship.xp_baseline_addressee || 0) : (friendship.xp_baseline_requester || 0);
@@ -3651,17 +3802,18 @@ function renderFriendRow(item, myXp) {
           <button class="ghost-btn small-btn" data-action="toggle-friend-detail" data-friend-id="${escapeAttr(friendship.id)}">${isExpanded ? "Hide" : "Details"}</button>
         </div>
         <div>
-          <p class="row-title">${escapeHtml(profile.display_name || profile.username)}</p>
+          <p class="row-title">${escapeHtml(displayName)}</p>
           <p class="row-meta">Level ${profile.level || 1}</p>
         </div>
       </div>
-      ${expandedHtml}
     </div>
+    ${expandedHtml}
   `;
 }
 
 function renderFriendDetail(item, myXp, myBaseline, friendBaseline, myGain, friendGain) {
   const { friendship, profile } = item;
+  const displayName = friendDisplayName(profile);
   const isRequester = friendship.requester_id === currentUser?.id;
   const myChallengeBaseline = isRequester
     ? (friendship.challenge_xp_baseline_requester || 0)
@@ -3678,7 +3830,14 @@ function renderFriendDetail(item, myXp, myBaseline, friendBaseline, myGain, frie
     : "Unknown";
 
   return `
-    <div class="friend-detail">
+    <div class="friend-detail-card">
+      <div class="panel-head friend-detail-head">
+        <div>
+          <h3 class="panel-title">${escapeHtml(displayName)}</h3>
+          <p class="panel-note">Friend details and accountability stats.</p>
+        </div>
+        <button class="ghost-btn small-btn" data-action="toggle-friend-detail" data-friend-id="${escapeAttr(friendship.id)}">Hide</button>
+      </div>
       <div class="friend-stats-grid">
         <div class="friend-stat">
           <span class="friend-stat-label">Progress together</span>
@@ -3723,7 +3882,7 @@ function renderIncomingRequest(item) {
   return `
     <div class="row">
       <div>
-        <p class="row-title">${escapeHtml(profile.display_name || profile.username)}</p>
+        <p class="row-title">${escapeHtml(friendDisplayName(profile))}</p>
         <p class="row-meta">Wants to connect</p>
       </div>
       <div class="friend-row-right">
@@ -3739,7 +3898,7 @@ function renderOutgoingRequest(item) {
   return `
     <div class="row">
       <div>
-        <p class="row-title">${escapeHtml(profile.display_name || profile.username)}</p>
+        <p class="row-title">${escapeHtml(friendDisplayName(profile))}</p>
         <p class="row-meta">Request sent</p>
       </div>
       <button class="ghost-btn small-btn" data-action="cancel-friend-request" data-friendship-id="${escapeAttr(friendship.id)}">Cancel</button>
@@ -3751,8 +3910,19 @@ function renderOutgoingRequest(item) {
 
 async function loadSocialData() {
   if (!currentUser) return;
-  const prevSearchResults = runtime.social?.searchResults || [];
-  runtime.social = { friends: [], incoming: [], outgoing: [], searchResults: prevSearchResults, loading: true, friendsError: null };
+  const previous = runtime.social || {};
+  const prevSearchResults = previous.searchResults || [];
+  const loadId = (runtime.socialLoadId || 0) + 1;
+  runtime.socialLoadId = loadId;
+  runtime.social = {
+    friends: previous.friends || [],
+    incoming: previous.incoming || [],
+    outgoing: previous.outgoing || [],
+    searchResults: prevSearchResults,
+    loading: true,
+    friendsError: null,
+    realtimeSub: previous.realtimeSub || null,
+  };
   render();
 
   const myId = currentUser.id;
@@ -3765,6 +3935,17 @@ async function loadSocialData() {
 
   if (sentRes.error) console.warn("Friendships (sent) load failed:", sentRes.error.message);
   if (receivedRes.error) console.warn("Friendships (received) load failed:", receivedRes.error.message);
+  if (runtime.socialLoadId !== loadId) return;
+
+  if (sentRes.error && receivedRes.error) {
+    runtime.social = {
+      ...runtime.social,
+      loading: false,
+      friendsError: sentRes.error.message || receivedRes.error.message,
+    };
+    render();
+    return;
+  }
 
   const sent     = sentRes.data || [];
   const received = receivedRes.data || [];
@@ -3774,18 +3955,6 @@ async function loadSocialData() {
   const incoming = received.filter((f) => f.status === "pending");
   const outgoing = sent.filter((f) => f.status === "pending");
 
-  // Update pending requests immediately so the UI shows them even if profiles fail
-  runtime.social = {
-    loading: false,
-    friendsError: (sentRes.error && receivedRes.error) ? sentRes.error.message : null,
-    searchResults: prevSearchResults,
-    friends: [],
-    incoming: incoming.map((f) => ({ friendship: f, profile: {} })),
-    outgoing: outgoing.map((f) => ({ friendship: f, profile: {} })),
-  };
-  render(); // show requests immediately
-
-  // Now load profiles for everyone we found
   const profileIds = [...new Set([
     ...accepted.map((f) => f.requester_id === myId ? f.addressee_id : f.requester_id),
     ...incoming.map((f) => f.requester_id),
@@ -3800,12 +3969,19 @@ async function loadSocialData() {
       .in("id", profileIds);
     if (pErr) console.warn("Profiles load failed:", pErr.message);
     (profiles || []).forEach((p) => { profileMap[p.id] = p; });
+    if (pErr && !Object.keys(profileMap).length && (runtime.social?.friends || []).length) {
+      runtime.social = { ...runtime.social, loading: false, friendsError: pErr.message };
+      render();
+      return;
+    }
   }
+  if (runtime.socialLoadId !== loadId) return;
 
   runtime.social = {
     loading: false,
-    friendsError: runtime.social.friendsError,
+    friendsError: sentRes.error?.message || receivedRes.error?.message || null,
     searchResults: runtime.social.searchResults,
+    realtimeSub: runtime.social.realtimeSub || null,
     friends: accepted.map((f) => ({
       friendship: f,
       profile: profileMap[f.requester_id === myId ? f.addressee_id : f.requester_id] || {},
@@ -3842,6 +4018,10 @@ function subscribeToFriendProfiles(profileIds) {
     })
     .subscribe();
   if (runtime.social) runtime.social.realtimeSub = sub;
+}
+
+function friendDisplayName(profile = {}) {
+  return profile.display_name || profile.username || "Friend";
 }
 
 async function socialSearch() {

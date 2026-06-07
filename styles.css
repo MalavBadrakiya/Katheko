@@ -1989,12 +1989,17 @@ textarea:focus-visible {
   gap: 8px;
   flex-shrink: 0;
 }
-.friend-detail {
+.friend-detail-card {
   background: var(--paper);
   border-radius: var(--radius);
-  padding: 14px;
-  margin-top: 6px;
-  margin-bottom: 8px;
+  border: 3px solid var(--ink);
+  box-shadow: 8px 8px 0 var(--ink);
+  padding: 18px;
+  margin: 10px 0 18px;
+}
+.friend-detail-head {
+  align-items: flex-start;
+  margin-bottom: 14px;
 }
 .friend-stats-grid {
   display: grid;
@@ -2031,6 +2036,9 @@ textarea:focus-visible {
 }
 .green-text { color: var(--green); }
 .coral-text { color: var(--coral); }
+.social-loading {
+  background: var(--cream);
+}
 .chip.green {
   background: var(--green-soft);
   color: var(--green);
