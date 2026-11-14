@@ -305,7 +305,7 @@ struct SocialView:View {
             ForEach(results,id:\.selfID){p in HStack{Text(p.text("display_name").isEmpty ? p.text("username") : p.text("display_name"));Spacer();Button("Connect"){Task{await store.socialAction("friend",["other_id":p.text("id")]);results=[]}}}}
         }
         if !store.social.rows("incoming").isEmpty || !store.social.rows("outgoing").isEmpty {Section("Requests"){
-            ForEach(store.social.rows("incoming"),id:\.selfID){p in VStack(alignment:.leading){Text(p.text("name"));HStack{Button("Accept"){respond(p,"accept")};Button("Decline"){respond(p,"decline")}}}
+            ForEach(store.social.rows("incoming"),id:\.selfID){p in VStack(alignment:.leading){Text(p.text("name"));HStack{Button("Accept"){respond(p,"accept")};Button("Decline"){respond(p,"decline")}}}}
             ForEach(store.social.rows("outgoing"),id:\.selfID){p in HStack{Text(p.text("name"));Spacer();Button("Cancel"){respond(p,"cancel")}}}
         }}
         Section("Friends"){ForEach(store.social.rows("friends"),id:\.selfID){f in VStack(alignment:.leading,spacing:10){HStack{Text(f.text("name")).font(.headline);Spacer();Button("Share"){sheet=SocialSheet(kind:"share",data:f)}};Text("\(f.number("xp")) points · \(f.number("myGain")-f.number("gain")) your lead").font(.caption);Text("\(max(0,min(f.number("myGain"),f.number("gain")))) points together since connecting").font(.caption).foregroundStyle(.secondary)}}
@@ -313,7 +313,7 @@ struct SocialView:View {
         }
         Section("Shared with you"){ForEach(store.social.rows("shares").filter{$0.text("owner_id") != store.uid},id:\.shareID){s in VStack(alignment:.leading,spacing:12){Text(s.object("habit").text("title")).font(.headline);Text(s.text("owner_name")).font(.caption);HabitDays(habit:s.object("habit"),dates:store.days(store.monday(store.today),store.add(store.monday(store.today),6)),action:{day in var data=s;data["date"]=day;sheet=SocialSheet(kind:"suggest",data:data)});Button("Track this together"){Task{await store.track(s)}}}}}
         Section("Sharing permissions"){ForEach(store.social.rows("shares").filter{$0.text("owner_id")==store.uid},id:\.shareID){s in HStack{Text(s.object("habit").text("title")+" → "+s.text("friend_name"));Spacer();Button("Stop sharing"){revoke=s}}}}
-        Section("Edit history"){ForEach(store.social.rows("edits"),id:\.selfID){e in VStack(alignment:.leading,spacing:8){Text("\(e.text("actor_name")) · \(e.text("log_date"))").font(.headline);Text(e.flag("completed") ? "Suggested completed" : "Suggested not completed").font(.caption);Text(e.text("reason"));Text(e.text("status").capitalized).foregroundStyle(lime);if e.text("owner_id")==store.uid && e.text("status")=="pending"{HStack{Button("Apply"){resolve(e,true)};Button("Decline"){resolve(e,false)}}}}}
+        Section("Edit history"){ForEach(store.social.rows("edits"),id:\.selfID){e in VStack(alignment:.leading,spacing:8){Text("\(e.text("actor_name")) · \(e.text("log_date"))").font(.headline);Text(e.flag("completed") ? "Suggested completed" : "Suggested not completed").font(.caption);Text(e.text("reason"));Text(e.text("status").capitalized).foregroundStyle(lime);if e.text("owner_id")==store.uid && e.text("status")=="pending"{HStack{Button("Apply"){resolve(e,true)};Button("Decline"){resolve(e,false)}}}}}}
         DisclosureGroup("Points and accountability"){Text("10 points per logged day, plus 30 when a weekly target is met. Undoing a log recalculates points. Friends only see habits you share. You approve their corrections.").font(.caption)}
     }.navigationTitle("Better together.")
     .toolbar{Button{Task{await store.perform{try await store.refreshSocial()}}}label:{Image(systemName:"arrow.clockwise")}.accessibilityLabel("Refresh friends")}
@@ -368,3 +368,4 @@ struct ProfileView:View {
     .fileExporter(isPresented:$export,document:AccountExport(data:(try? JSONSerialization.data(withJSONObject:store.state ?? [:],options:[.prettyPrinted,.sortedKeys])) ?? Data()),contentType:.json,defaultFilename:"katheko-account-\(store.today)"){result in if case .failure(let e)=result{store.message=e.localizedDescription}}
     }
 }
+
