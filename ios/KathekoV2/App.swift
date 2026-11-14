@@ -57,11 +57,12 @@ enum SecureSession {
     func call(_ function: String,_ args: [Any]) -> JSValue? {
         core.objectForKeyedSubscript("KathekoCore")?.objectForKeyedSubscript(function)?.call(withArguments:args)
     }
-    func metric(_ h: JSON,_ date: String,_ mode: String) -> JSON { call(mode == "month" ? "month" : "week",[h,date,today])?.toDictionary() as? JSON ?? [:] }
+    func metric(_ h: JSON,_ date: String,_ mode: String) -> JSON { call(mode == "month" ? "month" : "week",[h,date.isEmpty ? today : date,today])?.toDictionary() as? JSON ?? [:] }
     func add(_ date: String,_ days: Int) -> String { call("add",[date,days])!.toString() }
     func monday(_ date: String) -> String { call("monday",[date])!.toString() }
     func days(_ start: String,_ end: String) -> [String] { call("dates",[start,end])?.toArray() as? [String] ?? [] }
     func range(_ date: String,_ mode: String) -> (String,String) {
+        let date=date.isEmpty ? today : date
         if mode == "day" { return (date,date) }
         if mode == "week" { let a=monday(date); return (a,add(a,6)) }
         let m=metric(["startDate":"2000-01-01","weeklyTarget":1,"logs":[:]],date,"month")
@@ -223,12 +224,21 @@ struct AuthView: View {
     }
 }
 struct MainTabs: View {
+    @EnvironmentObject var store:Store
+    @Environment(\.scenePhase) private var phase
     @State private var selected=0
     var body:some View { TabView(selection:$selected){
         NavigationStack{HabitsView()}.tabItem{Label("Habits",systemImage:"checkmark.circle")}.tag(0)
         NavigationStack{SocialView()}.tabItem{Label("Social",systemImage:"person.2")}.tag(1)
         NavigationStack{AnalyticsView()}.tabItem{Label("Analytics",systemImage:"chart.bar")}.tag(2)
         NavigationStack{ProfileView(connect:{selected=1})}.tabItem{Label("Profile",systemImage:"person.crop.circle")}.tag(3)
+    }.task {
+        while !Task.isCancelled {
+            do { try await Task.sleep(for:.seconds(30)) } catch { return }
+            if phase == .active,store.state != nil,!store.busy {
+                await store.perform { try await store.load();if selected == 1 || selected == 3 {try await store.refreshSocial()} }
+            }
+        }
     } }
 }
 struct PeriodPicker:View {
