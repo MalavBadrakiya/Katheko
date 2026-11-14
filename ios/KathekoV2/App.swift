@@ -207,7 +207,10 @@ struct RootView: View {
 }
 struct AuthView: View {
     @EnvironmentObject var store:Store
-    @State private var email="",password="",name="",signup=false
+    @State private var email=""
+    @State private var password=""
+    @State private var name=""
+    @State private var signup=false
     var body:some View {
         ScrollView { VStack(alignment:.leading,spacing:24){Text("katheko.").font(.largeTitle.bold());Text(signup ? "Start with one habit." : "Welcome back.").font(.title)
             if signup {TextField("Name",text:$name).textContentType(.name)}
@@ -247,7 +250,9 @@ struct HabitDays:View {
 struct HabitSelection:Identifiable{let id=UUID();var habit:JSON?}
 struct HabitsView:View {
     @EnvironmentObject var store:Store
-    @State private var mode="week",date="",archived=false
+    @State private var mode="week"
+    @State private var date=""
+    @State private var archived=false
     @State private var editor:HabitSelection?
     var body:some View {List{
         Section{PeriodPicker(mode:$mode,date:$date)}
@@ -268,7 +273,10 @@ extension Dictionary where Key==String,Value==Any {var selfID:String{text("id")}
 struct HabitEditor:View {
     @EnvironmentObject var store:Store;@Environment(\.dismiss) var dismiss
     var habit:JSON?
-    @State private var title="",type="build",target=4,confirmArchive=false
+    @State private var title=""
+    @State private var type="build"
+    @State private var target=4
+    @State private var confirmArchive=false
     var body:some View{NavigationStack{Form{TextField("Habit name",text:$title);Picker("Direction",selection:$type){Text("Build").tag("build");Text("Break").tag("break")};Stepper("\(target) days per week",value:$target,in:1...7)
         if habit != nil{Text("Target changes begin next Monday. Earlier weeks keep their targets.").font(.caption);Button(habit!.flag("archived") ? "Restore habit" : "Archive habit"){confirmArchive=true}}
     }.navigationTitle(habit == nil ? "New habit" : "Edit habit").toolbar{ToolbarItem(placement:.cancellationAction){Button("Cancel"){dismiss()}};ToolbarItem(placement:.confirmationAction){Button("Save"){Task{if await store.editHabit(habit,title:title.trimmingCharacters(in:.whitespacesAndNewlines),type:type,target:target){dismiss()}}}.disabled(title.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || title.count>80)}}
@@ -278,7 +286,8 @@ struct HabitEditor:View {
 }
 struct AnalyticsView:View {
     @EnvironmentObject var store:Store
-    @State private var mode="week",date=""
+    @State private var mode="week"
+    @State private var date=""
     var rows:[JSON]{store.habits.filter{!$0.flag("archived")}}
     var body:some View{List{Section{PeriodPicker(mode:$mode,date:$date,analytics:true)}
         let metrics=rows.map{store.metric($0,date,mode)},eligible=metrics.filter{$0.number("goal")>0}
@@ -297,7 +306,8 @@ struct AnalyticsView:View {
 struct SocialSheet: Identifiable { let id=UUID();let kind:String;let data:JSON }
 struct SocialView:View {
     @EnvironmentObject var store:Store
-    @State private var query="",results:[JSON]=[]
+    @State private var query=""
+    @State private var results:[JSON]=[]
     @State private var sheet:SocialSheet?
     @State private var revoke:JSON?
     var body:some View{List{
@@ -329,7 +339,8 @@ extension Dictionary where Key==String,Value==Any{var shareID:String{text("owner
 struct SocialEditor:View {
     @EnvironmentObject var store:Store;@Environment(\.dismiss) var dismiss
     let sheet:SocialSheet
-    @State private var habit="",reason=""
+    @State private var habit=""
+    @State private var reason=""
     var body:some View{NavigationStack{Form{
         if sheet.kind == "share"{Picker("Habit",selection:$habit){ForEach(store.habits.filter{!$0.flag("archived")},id:\.selfID){h in Text(h.text("title")).tag(h.text("id"))}};Text("Your friend sees this habit's history and can suggest corrections. You approve each change.").font(.caption)}
         else{Text(sheet.data.object("habit").text("title"));Text(sheet.data.text("date"));Text(sheet.data.object("habit").object("logs").flag(sheet.data.text("date")) ? "Suggest not completed" : "Suggest completed");TextField("Reason",text:$reason,axis:.vertical)}
@@ -352,7 +363,9 @@ struct AccountExport:FileDocument {
 struct ProfileView:View {
     @EnvironmentObject var store:Store
     var connect:()->Void
-    @State private var export=false,signout=false,deleteConfirmation=false
+    @State private var export=false
+    @State private var signout=false
+    @State private var deleteConfirmation=false
     @State private var deletePhrase=""
     @State private var timezone="Europe/London"
     var body:some View{List{
