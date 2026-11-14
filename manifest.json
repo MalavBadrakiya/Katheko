@@ -1,11 +1,11 @@
 {
   "name": "Kathēkõ",
   "short_name": "Kathēkõ",
-  "description": "A 12-week behavioural operating system for habits, loops, sessions, and analytics.",
+  "description": "Habits, progress and accountability with friends.",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#f7f6f1",
-  "theme_color": "#202423",
+  "background_color": "#0c0e11",
+  "theme_color": "#0c0e11",
   "icons": [
     {
       "src": "./assets/katheko-logo.png",
