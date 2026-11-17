@@ -25,8 +25,17 @@
     // The authenticated row owns its records, including IDs from the old demo migration.
     // Keep the original ownership in legacyV1; never silently discard a saved habit.
     s.habits=(s.habits||[]).map(h=>({...h,userId:user.id,startDate:h.startDate||[h.createdAt?.slice(0,10),...Object.keys(h.logs||{})].filter(Boolean).sort()[0]||now,logs:h.logs||{},weeklyTarget:Math.max(1,Math.min(7,Number(h.weeklyTarget)||1))}));
-    s.timezone ||= 'Europe/London'; s.version=2; return s;
+    s.timezone ||= 'Europe/London';
+    const cutoff=today(s.timezone);
+    s.habits.forEach(h=>{for(const d of Object.keys(h.logs)){if(d>cutoff){h.quarantinedFutureLogs ||= {};h.quarantinedFutureLogs[d]=h.logs[d];delete h.logs[d];}}});
+    s.version=2; return s;
   };
-  const api={day,iso,today,add,monday,dates,target,count,week,month,points,streak,normalise};
+  const completed=(h,date,now=today())=>date<=now&&date>=h.startDate&&date<=(h.archivedAt||'9999-12-31')&&h.logs?.[date]===true;
+  const socialActivity=(s,uid)=>[
+    ...(s.incoming||[]).map(x=>({key:'request:'+x.id,signature:x.id,label:(x.name||'Friend')+' wants to connect'})),
+    ...(s.shares||[]).filter(x=>x.owner_id!==uid).map(x=>({key:'share:'+x.owner_id+':'+x.habit_id,signature:JSON.stringify([x.habit?.title,x.habit?.type,x.habit?.weeklyTarget,x.habit?.targetHistory,x.habit?.archived,Object.entries(x.habit?.logs||{}).sort(([a],[b])=>a.localeCompare(b))]),label:(x.owner_name||'Friend')+' shared or updated '+(x.habit?.title||'a habit')})),
+    ...(s.edits||[]).filter(x=>x.owner_id===uid||x.status!=='pending').map(x=>({key:'edit:'+x.id,signature:x.status+':'+(x.resolved_at||x.created_at||''),label:(x.actor_name||'Friend')+' · '+(x.status==='pending'?'new edit suggestion':x.status+' edit')+' · '+x.log_date}))
+  ];
+  const api={day,iso,today,add,monday,dates,target,count,week,month,points,streak,normalise,completed,socialActivity};
   if(typeof module!=='undefined')module.exports=api;else root.KathekoCore=api;
 })(globalThis);
