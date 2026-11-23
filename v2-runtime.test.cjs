@@ -1,5 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),crypto=require('node:crypto');
-function app(preview=true,db){const root={innerHTML:'',focus(){},querySelectorAll:()=>[]},editor={innerHTML:'',showModal(){this.open=true}},events={},dialogs=[];const body={append:dialog=>dialogs.push(dialog)};const context=vm.createContext({KathekoCore:require('./v2-core'),crypto,console,navigator:{},Date,setTimeout,clearTimeout,setInterval:()=>0,Blob,URL,window:{KATHEKO_PREVIEW:preview,supabase:{createClient:()=>db}},SUPABASE_URL:'test',SUPABASE_KEY:'test',document:{body,activeElement:body,querySelector:selector=>selector==='#editor'?editor:root,addEventListener:(k,f)=>events[k]=f,createElement:()=>({innerHTML:'',addEventListener(){},setAttribute(){},querySelector:()=>({focus(){}}),querySelectorAll:()=>[],showModal(){this.open=true},close(){this.open=false},remove(){dialogs.splice(dialogs.indexOf(this),1)}})},confirm:()=>true});vm.runInContext(fs.readFileSync(__dirname+'/v2.js','utf8'),context);return{root,events,dialogs,editor};}
+function app(preview=true,db){const root={innerHTML:'',focus(){},remove(){},querySelectorAll:()=>[]},editor={innerHTML:'',showModal(){this.open=true},close(){this.open=false}},events={},dialogs=[];const body={append:dialog=>dialogs.push(dialog)};const context=vm.createContext({KathekoCore:require('./v2-core'),crypto,console,navigator:{},Date,setTimeout,clearTimeout,setInterval:()=>0,Blob,URL,window:{KATHEKO_PREVIEW:preview,supabase:{createClient:()=>db}},SUPABASE_URL:'test',SUPABASE_KEY:'test',document:{body,activeElement:body,querySelector:selector=>selector==='#editor'?editor:root,addEventListener:(k,f)=>events[k]=f,createElement:()=>({innerHTML:'',addEventListener(){},setAttribute(){},querySelector:()=>({focus(){}}),querySelectorAll:()=>[],showModal(){this.open=true},close(){this.open=false},remove(){dialogs.splice(dialogs.indexOf(this),1)}})},confirm:()=>true});vm.runInContext(fs.readFileSync(__dirname+'/v2.js','utf8'),context);return{root,events,dialogs,editor};}
 test('preview renders four routes and three periods',async()=>{const a=app();assert.match(a.root.innerHTML,/Make today count/);for(const view of ['analytics','social','profile','habits']){await a.events.click({target:{closest:()=>({dataset:{do:'nav',view}})}});assert.ok(a.root.innerHTML.includes('class="shell"'));assert.ok(!a.root.innerHTML.includes('undefined'));}for(const mode of ['day','week','month']){await a.events.click({target:{closest:()=>({dataset:{do:'mode',mode}})}});assert.match(a.root.innerHTML,/Read 20 minutes/);}});
 test('shared history moves back and returns to current week independently of habit mode',async()=>{const a=app();const click=async action=>a.events.click({target:{closest:()=>({dataset:{do:action}})}});await a.events.click({target:{closest:()=>({dataset:{do:'nav',view:'social'}})}});const dates=()=>[...a.root.innerHTML.matchAll(/data-date="(\d{4}-\d{2}-\d{2})"/g)].map(x=>x[1]);const current=dates();assert.equal(current.length,7);await click('shared-previous');assert.equal(require('./v2-core').day(current[0])-require('./v2-core').day(dates()[0]),7);await click('shared-today');assert.deepEqual(dates(),current);assert.match(a.root.innerHTML,/Mark seen/);await click('seen');assert.doesNotMatch(a.root.innerHTML,/Mark seen/);});
 test('failed reads never save blank state',async()=>{let writes=0;const db={auth:{getSession:async()=>({data:{session:{user:{id:'real'}}}})},from:()=>({select(){return this},eq(){return this},maybeSingle:async()=>({error:{message:'offline'}})}),rpc:()=>{writes++;}};const a=app(false,db);await new Promise(r=>setTimeout(r,10));assert.equal(writes,0);assert.match(a.root.innerHTML,/No changes have been saved/);});
@@ -89,4 +89,30 @@ test('the final tutorial action opens the real habit form', async () => {
   assert.equal(a.editor.open,true);
   assert.match(a.editor.innerHTML,/data-form="habit"/);
   assert.match(a.root.innerHTML,/Make today count/);
+});
+
+test('Profile owns the consolidated help document', async () => {
+  const a=app();
+  await click(a,'nav',{view:'social'});
+  assert.doesNotMatch(a.root.innerHTML,/Points and accountability/);
+  await click(a,'nav',{view:'analytics'});
+  assert.doesNotMatch(a.root.innerHTML,/About these numbers/);
+  await click(a,'nav',{view:'profile'});
+  assert.match(a.root.innerHTML,/How Katheko works/);
+  assert.doesNotMatch(a.root.innerHTML,/A clear points system/);
+  await click(a,'help-open');
+  assert.equal(a.editor.open,true);
+  assert.match(a.editor.innerHTML,/Friends and privacy/);
+  assert.match(a.editor.innerHTML,/Archived habits/);
+  assert.match(a.editor.innerHTML,/\+10/);
+});
+
+test('archived habits can be restored or permanently deleted', async () => {
+  const a=app();
+  await click(a,'archive',{id:'habit-0'});
+  await click(a,'archive-view');
+  assert.match(a.root.innerHTML,/Restore/);
+  assert.match(a.root.innerHTML,/Delete forever/);
+  await click(a,'delete-habit',{id:'habit-0'});
+  assert.doesNotMatch(a.root.innerHTML,/Read 20 minutes/);
 });

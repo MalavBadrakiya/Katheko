@@ -7,3 +7,7 @@
 .tutorial-example { background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-top: 20px; }
 .tutorial-example small { display: block; margin-top: 4px; }
 .tutorial [role="status"]:empty { display: none; }
+.archive-switch{margin-top:32px}
+.help-document{max-height:min(60vh,640px);overflow:auto;padding-right:8px}
+.help-document h3{margin:24px 0 6px;color:var(--lime)}
+.help-document p{margin:0;line-height:1.65;color:var(--muted)}
