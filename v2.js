@@ -34,12 +34,95 @@ function markSeen(){seenActivity=Object.fromEntries(activityItems().map(x=>[x.ke
 function circleUpdates(){const updates=activity();return updates.length?'<section class="notice" aria-label="Circle updates"><div class="row wrap"><h2>'+updates.length+' circle update'+(updates.length===1?'':'s')+'</h2>'+btn('Mark seen','seen')+'</div>'+updates.map(x=>'<p><span class="newdot" aria-hidden="true"></span> '+esc(x.label)+'</p>').join('')+'<small>Alerts are remembered on this device. Refreshes while the app is open.</small></section>':'';}
 function sharedControls(){const a=C.monday(sharedCursor),b=C.add(a,6);return '<div class="toolbar foot">'+btn('‹','shared-previous','aria-label="Previous shared week"')+'<span class="period">'+fmt(a)+' – '+fmt(b)+'</span>'+btn('›','shared-next','aria-label="Next shared week" '+(b>=now?'disabled':''))+btn('This week','shared-today')+'</div>';}
 function socialPage(){return header('Better together.','Your circle',btn('↻','reload-social','aria-label="Refresh friends"'))+circleUpdates()+`<form data-form="search" class="row"><input name="query" aria-label="Find a friend" placeholder="Find by name or username" required minlength="2" maxlength="60"><button class="primary">Find</button></form>${socialError?`<p class="error hint" role="alert">${esc(socialError)}</p>`:''}${social.results.map(p=>`<div class="row friend"><span>${esc(p.display_name||p.username)}</span>${btn('Connect','request',`data-id="${p.id}"`)}</div>`).join('')}${social.incoming.map(p=>`<div class="row friend"><span>${esc(p.name)} wants to connect</span>${btn('Accept','accept',`data-id="${p.id}"`)}${btn('Decline','decline',`data-id="${p.id}"`,'quiet')}</div>`).join('')}${social.outgoing.map(p=>`<div class="row friend"><span>${esc(p.name)} · request sent</span>${btn('Cancel','cancel',`data-id="${p.id}"`,'quiet')}</div>`).join('')}<div class="panel"><div class="row"><h2>Friends <span class="muted">${social.friends.length}</span></h2><small>Points since connecting</small></div>${social.friends.map(p=>`<div class="friend row"><div class="habit-title"><span class="avatar">${esc(p.name.slice(0,2).toUpperCase())}</span><div><h3>${esc(p.name)}</h3><small>${p.xp||0} habit points</small></div></div><div><strong class="positive">${(p.myGain||0)-(p.gain||0)>=0?'+':''}${(p.myGain||0)-(p.gain||0)}</strong><small class="muted"> your lead</small><small class="muted"> · ${Math.max(0,Math.min(p.myGain||0,p.gain||0))} together</small>${btn('Share','share',`data-friend="${p.id}"`,'quiet')}</div></div>`).join('')||'<p class="empty">Find your first accountability partner.</p>'}</div><div class="panel"><h2>Shared with you</h2>${sharedControls()}${social.shares.filter(s=>s.owner_id!==user.id).map(s=>`<div class="habit"><div class="row"><h3>${esc(s.habit.title)}</h3><small>${esc(s.owner_name)}</small></div>${calendar(s.habit,C.monday(sharedCursor),C.add(C.monday(sharedCursor),6),true,s.owner_id)}<p class="hint">Tap a day to suggest a correction.</p>${btn('Track this together','track-together',`data-id="${esc(s.habit_id)}" data-owner="${esc(s.owner_id)}"`,'quiet')}</div>`).join('')||'<p class="empty">Habits friends share with you appear here.</p>'}</div><div class="panel"><h2>Sharing permissions</h2>${social.shares.filter(s=>s.owner_id===user.id).map(s=>`<div class="row activity"><span>${esc(s.habit?.title||s.habit_id)} → ${esc(s.friend_name||s.friend_id)}</span>${btn('Stop sharing','unshare',`data-id="${esc(s.habit_id)}" data-friend="${esc(s.friend_id)}"`,'quiet')}</div>`).join('')||'<p class="hint">You choose which habits each friend can see.</p>'}</div><div class="panel"><h2>Edit history</h2>${social.edits.map(e=>`<div class="activity"><div class="row wrap"><span>${esc(e.actor_name||'Friend')} suggested ${e.completed?'completed':'not completed'} · ${esc(e.log_date)}</span><span class="badge">${esc(e.status)}</span></div><p>${esc(e.reason)}</p>${e.owner_id===user.id&&e.status==='pending'?`<div class="toolbar">${btn('Apply','resolve',`data-id="${e.id}" data-accept="true"`)}${btn('Decline','resolve',`data-id="${e.id}" data-accept="false"`,'quiet')}</div>`:''}</div>`).join('')||'<p class="hint">Suggestions and decisions stay visible here.</p>'}</div><details><summary>Points and accountability</summary>10 points per logged day, plus 30 when a weekly habit target is met. Undoing a log recalculates points. Friends see only habits you explicitly share. Corrections require your approval. These are self-recorded habits, not independently verified achievements.</details>`;}
-function profilePage(){const xp=total(),level=Math.floor(Math.sqrt(xp/100))+1;return header('Your space.','Profile')+`<div class="profilehead"><div class="avatar">${esc(name().slice(0,2).toUpperCase())}</div><div><h2>${esc(name())}</h2><p class="muted">${esc(user.email)}</p></div></div><div class="stats"><div class="stat"><strong>${xp}</strong><span>Habit points</span></div><div class="stat"><strong>${level}</strong><span>Level</span></div><div class="stat"><strong>${social.friends.length}</strong><span>Accountability partners</span></div></div><div class="panel"><div class="row"><div><h2>Your circle</h2><p class="hint">A little accountability goes a long way.</p></div>${btn('Connect →','nav','data-view="social"','primary')}</div></div><div class="panel"><h2>A clear points system</h2><div class="row activity"><span>Log a habit</span><strong>+10</strong></div><div class="row activity"><span>Reach its weekly target</span><strong>+30</strong></div><p class="hint">${level*level*100-xp} points to level ${level+1}.</p><details><summary>Previous progress</summary>V1 seasons, loops, coaching notes and XP remain in your account export. V2 habit points use the simpler rules above and are shown separately from legacy XP.</details></div><div class="panel"><h2>Your data</h2><div class="toolbar foot">${btn('Export account','export')}${btn('Timezone: '+esc(state.timezone),'timezone')}${btn('Reload cloud data','reload')}${btn('Sign out','logout','','quiet')}${btn('Delete account','delete-account','','quiet')}</div><p class="hint status">${preview?'Sample account. Nothing is sent to the live app.':esc(saveStatus||'Connected to your account.')}</p></div>`;}
+function profilePage(){const xp=total(),level=Math.floor(Math.sqrt(xp/100))+1;return header('Your space.','Profile')+`<div class="profilehead"><div class="avatar">${esc(name().slice(0,2).toUpperCase())}</div><div><h2>${esc(name())}</h2><p class="muted">${esc(user.email)}</p></div></div><div class="stats"><div class="stat"><strong>${xp}</strong><span>Habit points</span></div><div class="stat"><strong>${level}</strong><span>Level</span></div><div class="stat"><strong>${social.friends.length}</strong><span>Accountability partners</span></div></div><div class="panel"><div class="row"><div><h2>Your circle</h2><p class="hint">A little accountability goes a long way.</p></div>${btn('Connect →','nav','data-view="social"','primary')}</div></div><div class="panel"><h2>A clear points system</h2><div class="row activity"><span>Log a habit</span><strong>+10</strong></div><div class="row activity"><span>Reach its weekly target</span><strong>+30</strong></div><p class="hint">${level*level*100-xp} points to level ${level+1}.</p><details><summary>Previous progress</summary>V1 seasons, loops, coaching notes and XP remain in your account export. V2 habit points use the simpler rules above and are shown separately from legacy XP.</details></div><div class="panel"><h2>Your data</h2><div class="toolbar foot">${btn('Export account','export')}${btn('Timezone: '+esc(state.timezone),'timezone')}${btn('Reload cloud data','reload')}${btn('Sign out','logout','','quiet')}${btn('Delete account','delete-account','','quiet')}</div><p class="hint status">${preview?'Sample account. Nothing is sent to the live app.':esc(saveStatus||'Connected to your account.')}</p></div><div class="panel"><h2>Help</h2><div class="toolbar foot">${btn('Replay tutorial','tutorial-open')}</div></div>`;}
 function auth(){if(recovery)return `<div class="auth"><h1>Choose a new password.</h1><form class="form" data-form="password"><label>New password<input name="password" type="password" required minlength="8" autocomplete="new-password"></label><button class="primary">Update password</button></form></div>`;return `<div class="auth"><div class="brand">katheko<span>.</span></div><p class="eyebrow">Small actions. Stronger together.</p><h1>${authMode==='signup'?'Start with one habit.':'Welcome back.'}</h1><form class="form" data-form="auth">${authMode==='signup'?'<label>Name<input name="name" required maxlength="80" autocomplete="name"></label>':''}<label>Email<input name="email" type="email" required autocomplete="email"></label><label>Password<input name="password" type="password" required minlength="${authMode==='signup'?'8':'1'}" autocomplete="${authMode==='signup'?'new-password':'current-password'}"></label><button class="primary">${authMode==='signup'?'Create account':'Sign in'}</button><p role="alert" id="autherror" class="error"></p></form><div class="foot">${btn(authMode==='signup'?'Already have an account?':'Create an account','auth-mode','','quiet')}${btn('Forgot password?','recover','','quiet')}</div></div>`;}
+const tutorialSteps = [
+  ['Habits', 'Start with one habit', 'Choose + Habit, pick Build a habit or Break a habit, then set a weekly target. Use Edit to change or archive a habit. Target changes take effect the following Monday.'],
+  ['Habits', 'Log a day', 'Tick a day when you do a build habit or go without a break habit. Tap again to undo. Switch between Day, Week and Month and use the arrows to review your history.'],
+  ['Social', 'Share with a friend', 'Find a friend by name and send a request. After they accept, choose a habit to share. Friends can review shared weeks and suggest corrections for you to approve. Track together gives you your own copy with separate progress.'],
+  ['Analytics', 'Review your progress', 'Switch between Week and Month to review daily activity and see how each habit is progressing towards its target.'],
+  ['Profile', 'Find your settings and help', 'See your habit points and level, change your timezone or export your data. Replay this tutorial from Help at the bottom of Profile.']
+];
+let tutorial = null;
+
+function showTutorial(firstRun = false) {
+  if (tutorial) return;
+  const dialog = document.createElement('dialog');
+  dialog.className = 'tutorial';
+  dialog.setAttribute('aria-labelledby', 'tutorial-title');
+  tutorial = { dialog, opener: document.activeElement, firstRun, step: 0, checked: false, saving: false };
+  dialog.addEventListener('cancel', event => {
+    event.preventDefault();
+    finishTutorial(false).catch(error => toast(error.message));
+  });
+  document.body.append(dialog);
+  renderTutorial();
+  dialog.showModal();
+}
+
+function renderTutorial(focus = '#tutorial-title') {
+  const { dialog, step, checked, firstRun, saving } = tutorial;
+  const [section, title, description] = tutorialSteps[step];
+  const last = step === tutorialSteps.length - 1;
+  const sample = step === 1 ? `<div class="row tutorial-example"><div><strong>Read 20 minutes</strong><small class="muted">Sample habit</small></div>${btn(checked ? '✓ Logged' : 'Log a day', 'tutorial-sample', `aria-pressed="${checked}"`, checked ? 'selected' : '')}</div>` : '';
+  dialog.innerHTML = `<p class="eyebrow">${section} · ${step + 1} of ${tutorialSteps.length}</p>
+    <h2 id="tutorial-title" tabindex="-1" autofocus>${title}</h2><p>${description}</p>${sample}
+    <div class="toolbar foot">
+      ${step ? btn('Back', 'tutorial-back') : ''}
+      ${last ? btn('Add a habit', 'tutorial-add', '', 'primary') + btn('Done', 'tutorial-done') : btn('Next', 'tutorial-next', '', 'primary')}
+      ${last ? '' : btn(firstRun ? 'Skip tutorial' : 'Close tutorial', 'tutorial-done', '', 'quiet')}
+    </div><p class="hint" role="status">${saving ? 'Saving tutorial preference…' : ''}</p>`;
+  if (saving) dialog.querySelectorAll('button').forEach(button => button.disabled = true);
+  dialog.querySelector(focus).focus();
+}
+
+function closeTutorial(restoreFocus = true) {
+  if (!tutorial) return;
+  const { dialog, opener } = tutorial;
+  tutorial = null;
+  dialog.close();
+  dialog.remove();
+  if (restoreFocus) {
+    const target = opener?.isConnected && opener !== document.body ? opener : $('[data-do="new"]');
+    target?.focus();
+  }
+}
+
+async function finishTutorial(addHabit) {
+  const current = tutorial;
+  if (!current || current.saving) return;
+  if (current.firstRun && !preview) {
+    current.saving = true;
+    renderTutorial();
+    const saved = await mutate(() => { state.webTutorialVersion = 1; });
+    if (tutorial !== current) return;
+    if (!saved) {
+      current.saving = false;
+      closeTutorial();
+      return;
+    }
+  }
+  closeTutorial(!addHabit);
+  if (addHabit) {
+    view = 'habits';
+    render();
+    openEditor();
+  }
+}
+
+function maybeShowTutorial() {
+  const created = Date.parse(user?.created_at);
+  if (state && !recovery && created >= Date.parse('2026-11-23T00:00:00Z') && !state.webTutorialVersion) showTutorial(true);
+}
+
 function openEditor(h){$('#editor').innerHTML=`<h2>${h?'Edit habit':'Start something good.'}</h2><form data-form="habit" class="form"><input type="hidden" name="id" value="${esc(h?.id||'')}"><label>Habit name<input name="title" required maxlength="80" value="${esc(h?.title||'')}" placeholder="Read 20 minutes" autofocus></label><label>Direction<select name="type"><option value="build">Build a habit</option><option value="break" ${h?.type==='break'?'selected':''}>Break a habit</option></select></label><label>Days per week<input name="target" type="number" min="1" max="7" required value="${h?.weeklyTarget||4}"></label>${h?'<p class="hint">Target changes begin next Monday. Earlier weeks keep their targets.</p>':''}<div class="toolbar"><button class="primary">Save habit</button>${btn('Cancel','close','','quiet')}${h?btn(h.archived?'Restore':'Archive','archive',`data-id="${h.id}"`,'quiet'):''}</div></form>`;$('#editor').showModal();}
 async function refreshSocial(){if(preview){render();return;}socialError='';try{const {data,error}=await db.rpc('katheko_v2_social');if(error)throw error;social={...data,results:social.results};}catch(e){socialError='Could not load your circle. '+e.message;}render();}
 async function rpc(fn,args){if(preview)return true;const {error}=await db.rpc(fn,args);if(error){toast(error.message);return false;}return true;}
 async function act(b){now=C.today(state?.timezone);const a=b.dataset.do,h=state?.habits.find(h=>h.id===b.dataset.id);if(busy)return;
+if(a==='tutorial-open'){showTutorial();return;}
+if(a==='tutorial-done'||a==='tutorial-add'){await finishTutorial(a==='tutorial-add');return;}
+if(a==='tutorial-next'||a==='tutorial-back'){tutorial.step+=a==='tutorial-next'?1:-1;renderTutorial();return;}
+if(a==='tutorial-sample'){tutorial.checked=!tutorial.checked;renderTutorial('[data-do="tutorial-sample"]');return;}
 if(a==='nav'){view=b.dataset.view;render();if(view==='social'||view==='profile')await refreshSocial();}
 if(a==='seen'){markSeen();return;}if(a==='shared-previous'||a==='shared-next'||a==='shared-today'){sharedCursor=a==='shared-today'?now:C.add(sharedCursor,a==='shared-previous'?-7:7);if(sharedCursor>now)sharedCursor=now;render();return;}
 if(a==='mode'){mode=b.dataset.mode;render();}if(a==='today'){cursor=now;render();}if(a==='previous'||a==='next'){const n=a==='previous'?-1:1;if(mode==='month'){const d=new Date(cursor.slice(0,7)+'-01T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+n);cursor=d.toISOString().slice(0,10);}else cursor=C.add(cursor,n*(mode==='week'?7:1));if(cursor>now)cursor=now;render();}
@@ -70,7 +153,7 @@ if(f.dataset.form==='search'){if(preview){social.results=[{id:'sample-new',displ
 if(f.dataset.form==='share'){if(preview){const h=state.habits.find(h=>h.id===d.habit);social.shares.push({owner_id:user.id,friend_id:d.friend,habit_id:h.id,habit:h,friend_name:social.friends.find(x=>x.id===d.friend)?.name});render();}else if(await rpc('katheko_v2_share',{habit:d.habit,friend:d.friend,enabled:true}))await refreshSocial();}
 if(f.dataset.form==='suggest'){if(preview){social.edits.unshift({id:id(),owner_id:d.owner,actor_name:'You',log_date:d.date,completed:d.completed==='true',reason:d.reason,status:'pending'});render();toast('Suggestion sent for approval.');}else if(await rpc('katheko_v2_suggest',{owner:d.owner,habit:d.habit,log_day:d.date,done:d.completed==='true',note:d.reason}))await refreshSocial();}
 }catch(err){if(f.dataset.form==='auth'&&$('#autherror'))$('#autherror').textContent=err.message;else toast(err.message);}finally{if(submit)submit.disabled=false;}});
-async function boot(){if(preview){seed();render();return;}$('#app').innerHTML='<div class="auth"><h2>Opening Katheko…</h2></div>';try{const {data,error}=await db.auth.getSession();if(error)throw error;user=data.session?.user||null;if(user){await load();restoreSeen();await refreshSocial();}if(typeof location!=='undefined'&&location.hash.includes('type=recovery'))recovery=true;render();db.auth.onAuthStateChange((event,session)=>{if(event==='PASSWORD_RECOVERY'){recovery=true;render();return;}if(event==='TOKEN_REFRESHED'||event==='INITIAL_SESSION')return;setTimeout(async()=>{user=session?.user||null;state=null;social={friends:[],incoming:[],outgoing:[],shares:[],edits:[],results:[]};try{if(user)await load();render();}catch(e){loadError(e);}},0);});}catch(e){loadError(e);}}
+async function boot(){if(preview){seed();render();if(typeof location!=='undefined'&&new URLSearchParams(location.search).has('tutorial'))showTutorial(true);return;}$('#app').innerHTML='<div class="auth"><h2>Opening Katheko…</h2></div>';try{const {data,error}=await db.auth.getSession();if(error)throw error;user=data.session?.user||null;if(user){await load();restoreSeen();await refreshSocial();}if(typeof location!=='undefined'&&location.hash.includes('type=recovery'))recovery=true;render();maybeShowTutorial();db.auth.onAuthStateChange((event,session)=>{if(event==='PASSWORD_RECOVERY'){closeTutorial(false);recovery=true;render();return;}if(event==='TOKEN_REFRESHED'||event==='INITIAL_SESSION')return;setTimeout(async()=>{if(session?.user?.id===user?.id && state)return;closeTutorial(false);user=session?.user||null;state=null;social={friends:[],incoming:[],outgoing:[],shares:[],edits:[],results:[]};try{if(user)await load();render();maybeShowTutorial();}catch(e){loadError(e);}},0);});}catch(e){loadError(e);}}
 function loadError(e){$('#app').innerHTML=`<div class="auth"><h1>Your data is safe.</h1><p class="hint">We couldn’t load it. No changes have been saved.</p><p class="error">${esc(e.message)}</p><button onclick="location.reload()">Try again</button></div>`;}
 if(!preview && 'serviceWorker' in navigator) navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
 if(!preview){let syncing=false;async function syncVisible(){if(syncing||busy||!state||document.visibilityState!=='visible'||document.querySelector('dialog[open]')||document.activeElement?.matches('input,textarea,select'))return;syncing=true;try{await load();await refreshSocial();}catch{}finally{syncing=false;}}setInterval(syncVisible,30000);document.addEventListener('visibilitychange',syncVisible);}
